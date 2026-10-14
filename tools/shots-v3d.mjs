@@ -1,23 +1,36 @@
-/* ถ่ายชุดภาพ verify 3D physics: กลางวัน · กลางคืน (ไฟจุด) · แดนมาร์ (ลาว) ·
-   ลูกไฟ ballistic กลางวิ้ง + ซ้ำ 2D (เทียบว่าทรง peril ทำงาน) */
+/* ถ่ายชุดภาพ verify 3D physics: กลางวัน · กลางคืน (ไฟจุด) · แดนมาร (ลาว) · แดนเซิร์ฟเถื่อน (ไซเบอร์) ·
+   ลูกไฟ ballistic กลางวิถี */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PW = process.env.PLAYWRIGHT_PATH || 'playwright';
-const _pw = await import(PW);
-const chromium = _pw.chromium || _pw.default?.chromium;
+let chromium;
+try {
+  const PW = process.env.PLAYWRIGHT_PATH || 'playwright';
+  const _pw = await import(PW);
+  chromium = _pw.chromium || _pw.default?.chromium;
+} catch (e) {
+  const _wd = await import('./webdriver-playwright.mjs');
+  chromium = _wd.chromium;
+}
 
 function findChromium() {
-  const root = path.join(process.env.LOCALAPPDATA, 'ms-playwright');
-  for (const d of fs.readdirSync(root)) {
-    if (!d.startsWith('chromium-')) continue;
-    for (const rel of ['chrome-win64/chrome.exe', 'chrome-linux/chrome']) {
-      const p = path.join(root, d, rel);
-      if (fs.existsSync(p)) return p;
+  const roots = [
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'ms-playwright'),
+    process.env.HOME && path.join(process.env.HOME, '.cache', 'ms-playwright'),
+  ].filter(Boolean);
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    for (const d of fs.readdirSync(root)) {
+      if (!d.startsWith('chromium-')) continue;
+      for (const rel of ['chrome-win64/chrome.exe', 'chrome-linux/chrome']) {
+        const p = path.join(root, d, rel);
+        if (fs.existsSync(p)) return p;
+      }
     }
   }
-  return null;
+  if (fs.existsSync('/usr/bin/chromium')) return '/usr/bin/chromium';
+  return undefined;
 }
 
 const PORT = Number(process.argv[2] || 8731);
@@ -37,16 +50,21 @@ await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#title-menu:not(.hidden)', { timeout: 25000 });
 await page.click('#btn-enter');
 await page.fill('#in-name', 'ช่างภาพ');
-await page.locator('.class-card').nth(2).click();       // ults mage
+await page.locator('.class-card').nth(2).click();
 await page.click('#btn-start');
 await page.waitForSelector('#scr-play.active', { timeout: 8000 });
 
 await page.evaluate(() => {
   const G = window.__GRIAN__;
+  G.GFX3D._softwareGL = () => false;
+  G.GFX3D._bench = () => true;
   G.Settings.set('render3d', 'on');
   G.Settings.set('autoQuality', false);
   G.state._aqLo2 = 0; G.state._aqLo = 0;
-  if (!G.GFX3D.ok) G.GFX3D.init(G.state.world);
+  if (!G.GFX3D.ok) {
+    G.GFX3D.init(G.state.world);
+    G.GFX3D.resize(G.view.w, G.view.h);
+  }
   G.DayNight.t = 0.45;
   const p = G.state.player;
   p.hp = p.maxHp; p.mp = 999; p.prevX = p.x; p.prevY = p.y;
@@ -59,7 +77,7 @@ await page.evaluate(() => { window.__GRIAN__.DayNight.t = 0.0; });
 await page.waitForTimeout(1500);
 await page.screenshot({ path: path.join(OUT, 'v3d-night.png') });
 
-// ลูกไฟ ballistic — หาเป้าหัยไกลแล้วยิงสกิล fire กลางลำ尽头
+// ลูกไฟ ballistic — หาเป้าแล้วยิงสกิล fire กลางลำ
 await page.evaluate(() => {
   const G = window.__GRIAN__;
   G.DayNight.t = 0.45;
@@ -70,17 +88,16 @@ await page.evaluate(() => {
     m.x = p.x + 150; m.y = p.y + 20; m.prevX = m.x; m.prevY = m.y; m.hp = m.maxHp;
     p.dir = 1;
     p.cooldowns.fire = 0; p.mp = p.maxMp;
-    G.handlers.onSkill('fire');        // ลูกไฟบีนมี ballistic จริง
+    G.handlers.onSkill('fire');
   }
 });
-await page.waitForTimeout(120);        // กลางการบิน (dur 0.3s)
+await page.waitForTimeout(120);
 await page.screenshot({ path: path.join(OUT, 'v3d-fire.png') });
 
-// ปล่อยให้ลูกไฟลงเป้าหมาย + ระเบิด
 await page.waitForTimeout(700);
 await page.screenshot({ path: path.join(OUT, 'v3d-fire-boom.png') });
 
-// แดนมาร์ กลางคืน — ลาว + ไฟเหล (เลี้ยงเลือดก่อน กัน modal ความตายบังภาพ)
+// แดนมาร กลางคืน — ลาว + ไฟจุด
 await page.evaluate(() => {
   const G = window.__GRIAN__;
   const p = G.state.player;
@@ -88,10 +105,10 @@ await page.evaluate(() => {
   G.travelTo('hell');
   G.DayNight.t = 0.02;
 });
-await page.waitForTimeout(2500);
+await page.waitForTimeout(2200);
 await page.screenshot({ path: path.join(OUT, 'v3d-hell.png') });
 
-// โซน 3 — แดนเซิร์ฟเถื่อน กลางคืน (霓虹/DATASTREAM/GLITCH)
+// แดนเซิร์ฟเถื่อน (โซน 3) — วงจรไซเบอร์ + สายธารดาต้า + บ่อบั๊กไฟดูด
 await page.evaluate(() => {
   const G = window.__GRIAN__;
   const p = G.state.player;
@@ -99,7 +116,7 @@ await page.evaluate(() => {
   G.travelTo('cyber');
   G.DayNight.t = 0.05;
 });
-await page.waitForTimeout(2500);
+await page.waitForTimeout(2200);
 await page.screenshot({ path: path.join(OUT, 'v3d-cyber.png') });
 
 console.log('errors:', errors.length);

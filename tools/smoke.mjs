@@ -360,18 +360,23 @@ const combat = await page.evaluate(async (isolateSrc) => {
     G.handlers.onAttack();
     await new Promise((r) => setTimeout(r, 40));
   }
-  const nearParts = () => G.Particles.pool.filter((pt) => pt.on && !pt.pulse && Math.hypot(pt.x - m.x, pt.y - m.y) < 42).length;
-  const partsPeak = nearParts();
+  // ติดตาม index อนุภาคตัวเดิม — อนุภาคใหม่ (AUTO potion/heal ที่ผู้เล่น ฯล) ไม่ควรทำให้เทสต์ผาดผืน
+  const seen = new Set();
+  G.Particles.pool.forEach((pt, i) => {
+    if (pt.on && !pt.pulse && Math.hypot(pt.x - m.x, pt.y - m.y) < 42) seen.add(i);
+  });
+  const partsPeak = seen.size;
   await new Promise((r) => setTimeout(r, 1200));
-  const partsAfterDecay = nearParts();
-  return { hp0, hp1: m.hp, partsPeak, partsAfterDecay, name: m.name };
+  let partsAlive = 0;
+  seen.forEach((i) => { if (G.Particles.pool[i].on) partsAlive++; });
+  return { hp0, hp1: m.hp, partsPeak, partsAlive, name: m.name };
 }, ISOLATE_FN);
 if (combat.err) bad('ทดสอบการต่อสู้', combat.err);
 else {
   if (combat.hp1 < combat.hp0) ok(`โจมตีมอนได้: ${combat.name} HP ${combat.hp0} → ${combat.hp1}`);
   else bad('โจมตีแล้วมอนเลือดไม่ลด', JSON.stringify(combat));
-  if (combat.partsPeak > 0 && combat.partsAfterDecay < combat.partsPeak) {
-    ok(`ระบบ particle สร้างและสลายตัวตามฟิสิกส์จริง (peak ${combat.partsPeak} → เหลือ ${combat.partsAfterDecay})`);
+  if (combat.partsPeak > 0 && combat.partsAlive < combat.partsPeak) {
+    ok(`ระบบ particle สร้างและสลายตัวตามฟิสิกส์จริง (peak ${combat.partsPeak} → เหลือ ${combat.partsAlive})`);
   } else bad('Particles.update ไม่ทำงานหรืออนุภาคไม่สลายตัว', JSON.stringify(combat));
 }
 
@@ -749,12 +754,24 @@ const upgrade = await page.evaluate(() => {
   }
   const atkAfter = p.atk;
   const aura = G.playerAura(p);
+  // ทดสอบออร่าครบทั้ง 3 ขั้น (+7 ออร่าฟ้า, +9 ออร่าทอง, +10 ออร่าม่วงราชันย์)
+  const w = p.equip.weapon;
+  const savedLvl = w.lvl;
+  w.lvl = 4; const a4 = G.playerAura(p)?.name || null;
+  w.lvl = 5; const a5 = G.playerAura(p)?.name || null;
+  w.lvl = 7; const a7 = G.playerAura(p)?.name || null;
+  w.lvl = 9; const a9 = G.playerAura(p)?.name || null;
+  w.lvl = 10; G.recalcPlayer(p); const a10 = G.playerAura(p)?.name || null; const atk10 = p.atk;
+  w.lvl = savedLvl; G.recalcPlayer(p);
   return {
     craftOk: craftRes.ok,
     maxLvl,
     atkBase,
     atkAfter,
+    atk10,
     aura: aura ? aura.name : null,
+    aurasOk: a4 === null && a5 === 'ออร่าฟ้า' && a7 === 'ออร่าม่วง' && a9 === 'ออร่าทอง' && a10 === 'ออร่าเทพเซิร์ฟเถื่อน',
+    a5, a7, a9, a10,
     fails: p.ctr.upgradeFail || 0,
     ok: p.ctr.upgradeOk || 0,
     charmSaved: p.ctr.charmSaved || 0,
@@ -764,6 +781,9 @@ const upgrade = await page.evaluate(() => {
 if (upgrade.craftOk && (upgrade.ok > 0 || upgrade.fails > 0) && upgrade.atkAfter > upgrade.atkBase && upgrade.stillEquipped) {
   ok(`ระบบอัพเกรด + ยันต์กันแตกทำงาน (สูงสุด +${upgrade.maxLvl}, ATK ${upgrade.atkBase} → ${upgrade.atkAfter}, ออร่า: ${upgrade.aura || 'ยัง'}, ยันต์ช่วยชีวิต ${upgrade.charmSaved} ครั้ง)`);
 } else bad('อัพเกรดหรือยันต์กันแตกไม่ทำงาน', JSON.stringify(upgrade));
+if (upgrade.aurasOk && upgrade.atk10 > upgrade.atkBase) {
+  ok(`ออร่าอาวุธตีบวกครบทั้ง 4 ระดับ (+5 ${upgrade.a5} · +7 ${upgrade.a7} · +9 ${upgrade.a9} · +10 ${upgrade.a10}, ATK ที่ +10 = ${upgrade.atk10})`);
+} else bad('ออร่าอาวุธตีบวกไม่ครบ 3 ระดับ', JSON.stringify(upgrade));
 
 /* ── 15. เควสต์ ── */
 const quest = await page.evaluate(() => {
@@ -831,10 +851,24 @@ const socialTest = await page.evaluate(async () => {
       await new Promise((r) => setTimeout(r, 120));
     }
   }
+  // 5) ทดสอบยศ PvP ครบทั้ง 5 ระดับ (ชนะ 0, 1, 3, 5, 10 ครั้ง -> โบนัส ATK +0, +4, +10, +18, +30)
+  const savedWins = p.ctr.pvpWins || 0;
+  const rankAtks = [];
+  for (const w of [0, 1, 3, 6, 10]) {
+    p.ctr.pvpWins = w;
+    G.recalcPlayer(p);
+    rankAtks.push(p.atk);
+  }
+  p.ctr.pvpWins = savedWins;
+  G.recalcPlayer(p);
+  const rankDiffs = rankAtks.map((v) => v - rankAtks[0]);
+  const ranksOk = rankDiffs[0] === 0 && rankDiffs[1] === 2 && rankDiffs[2] === 5 && rankDiffs[3] === 9 && rankDiffs[4] === 15;
   return {
     partyJoined: pRes.ok && pRes.joined && p.partyCount === 1,
     guildBuffOk: gRes.ok,
     pvpWon: pvpWins1 > pvpWins0,
+    ranksOk,
+    rankDiffs,
     towerStarted: tRes.ok && waveCount > 0,
     towerClearedFloor: p.ctr.towerFloor || 0,
   };
@@ -842,9 +876,9 @@ const socialTest = await page.evaluate(async () => {
 if (socialTest.partyJoined && socialTest.guildBuffOk) {
   ok('ระบบปาร์ตี้บอทจำลองและบัฟกิลด์ทำงานจริง');
 } else bad('ระบบปาร์ตี้หรือบัฟกิลด์ไม่ทำงาน', JSON.stringify(socialTest));
-if (socialTest.pvpWon) {
-  ok('ระบบประลอง PvP กับบอทเกรียนทำงานจริง (ได้แต้มชนะ + รางวัล)');
-} else bad('ระบบ PvP ไม่ทำงาน', JSON.stringify(socialTest));
+if (socialTest.pvpWon && socialTest.ranksOk) {
+  ok(`ระบบประลอง PvP และยศ PvP ครบ 5 ระดับทำงานจริง (โบนัส ATK ตามยศ: +${socialTest.rankDiffs.join(' / +')})`);
+} else bad('ระบบ PvP หรือยศ PvP 5 ระดับไม่ทำงาน', JSON.stringify(socialTest));
 if (socialTest.towerStarted && socialTest.towerClearedFloor >= 1) {
   ok(`ระบบดันเจี้ยนหอคอยบั๊กทำงานจริง (เคลียร์ถึงชั้น ${socialTest.towerClearedFloor})`);
 } else bad('ระบบหอคอยบั๊กไม่ทำงาน', JSON.stringify(socialTest));
@@ -1269,12 +1303,19 @@ const gl3 = await page.evaluate(async () => {
       for (let i = 0; i < px.length; i += 4) set.add(`${px[i]},${px[i + 1]},${px[i + 2]}`);
       const activeFx3D = (G.GFX3D.fx3dList || []).filter((f) => f.active).length;
       const sunZValid = !Number.isNaN(G.GFX3D.sun.position.z);
+      G.GFX3D.terrain.geometry.computeBoundingBox();
+      const bb = G.GFX3D.terrain.geometry.boundingBox;
+      const terrainAligned = Math.round(bb.min.x) === 0 && Math.round(bb.max.x) === 1536 && Math.round(bb.min.z) === 0 && Math.round(bb.max.z) === 1088;
+      const obsSids = (G.GFX3D.obstacles || []).map((o) => o.g.sid);
+      const noFloorBillboards = !obsSids.includes('t_grass') && !obsSids.includes('t_stonepath') && !obsSids.includes('t_cyberfloor');
       resolve({
         ok: true,
         colors: set.size,
         lights: G.GFX3D.lightPool.filter((l) => l.visible).length,
         activeFx3D,
         sunZValid,
+        terrainAligned,
+        noFloorBillboards,
         zoom: +G.GFX3D.zoom.toFixed(2),
       });
     });
@@ -1282,9 +1323,9 @@ const gl3 = await page.evaluate(async () => {
   G.GFX3D._softwareGL = origSw;
   return res;
 });
-if (gl3.ok && gl3.colors > 40 && gl3.sunZValid) {
-  ok(`three.js เรนเดอร์ GL ได้: ${gl3.colors} สี · ไฟจุด ${gl3.lights} · 3D VFX active=${gl3.activeFx3D} · ซูม=${gl3.zoom} · พิกัดดวงอาทิตย์ถูกต้อง`);
-} else bad('three.js เรนเดอร์ GL ไม่ได้ หรือพิกัดดวงอาทิตย์ผิด', JSON.stringify(gl3));
+if (gl3.ok && gl3.colors > 40 && gl3.sunZValid && gl3.terrainAligned && gl3.noFloorBillboards) {
+  ok(`three.js เรนเดอร์ GL ได้: ${gl3.colors} สี · ไฟจุด ${gl3.lights} · 3D VFX active=${gl3.activeFx3D} · ซูม=${gl3.zoom} · พิกัดพื้น/Cutout/ดวงอาทิตย์ถูกต้อง`);
+} else bad('three.js เรนเดอร์ GL ไม่ได้ หรือพิกัดผิด', JSON.stringify(gl3));
 await page.evaluate(() => window.__GRIAN__.Settings.set('render3d', 'off'));
 
 /* ── 25. ปล่อยรันต่อเพื่อจับ error ที่หลุด ── */

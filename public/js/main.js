@@ -1664,6 +1664,6 @@ window.__GRIAN__ = {
   hasSave, listSlots, wipeSave,
   get finder() { return finder; },
   orderMove, openChest, beginCapture, travelTo, advanceClass,
-  craftProtectCharm, togglePartyBot, applyGuildBuff, startTowerFloor, playerAura,
+  craftProtectCharm, togglePartyBot, applyGuildBuff, startTowerFloor, playerAura, recalcPlayer,
   T, HURT_TILES,
 };

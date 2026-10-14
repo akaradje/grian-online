@@ -1,22 +1,35 @@
-/* ตรวจ v0.10: โลก 3D (heightmap/billboard/เงา/กลางคืน) */
+/* ตรวจ v1.0: โลก 3D (heightmap/billboard cutout/เงา/กลางคืน/โซน 3) */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PW = process.env.PLAYWRIGHT_PATH || 'playwright';
-const _pw = await import(PW);
-const chromium = _pw.chromium || _pw.default?.chromium;
+let chromium;
+try {
+  const PW = process.env.PLAYWRIGHT_PATH || 'playwright';
+  const _pw = await import(PW);
+  chromium = _pw.chromium || _pw.default?.chromium;
+} catch (e) {
+  const _wd = await import('./webdriver-playwright.mjs');
+  chromium = _wd.chromium;
+}
 
 function findChromium() {
-  const root = path.join(process.env.LOCALAPPDATA, 'ms-playwright');
-  for (const d of fs.readdirSync(root)) {
-    if (!d.startsWith('chromium-')) continue;
-    for (const rel of ['chrome-win64/chrome.exe', 'chrome-linux/chrome']) {
-      const p = path.join(root, d, rel);
-      if (fs.existsSync(p)) return p;
+  const roots = [
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'ms-playwright'),
+    process.env.HOME && path.join(process.env.HOME, '.cache', 'ms-playwright'),
+  ].filter(Boolean);
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    for (const d of fs.readdirSync(root)) {
+      if (!d.startsWith('chromium-')) continue;
+      for (const rel of ['chrome-win64/chrome.exe', 'chrome-linux/chrome']) {
+        const p = path.join(root, d, rel);
+        if (fs.existsSync(p)) return p;
+      }
     }
   }
-  return null;
+  if (fs.existsSync('/usr/bin/chromium')) return '/usr/bin/chromium';
+  return undefined;
 }
 
 const PORT = Number(process.argv[2] || 8731);
@@ -43,7 +56,9 @@ await page.waitForSelector('#scr-play.active', { timeout: 8000 });
 await page.waitForTimeout(800);
 await page.evaluate(() => {
   const G = window.__GRIAN__;
-  G.Settings.set('render3d', 'on');       // บังคับ 3D (headless ช้า — bench จะปิดเอง)
+  G.GFX3D._softwareGL = () => false;
+  G.GFX3D._bench = () => true;
+  G.Settings.set('render3d', 'on');
   G.Settings.set('autoQuality', false);
   G.state._aqLo2 = 0;
   if (!G.GFX3D.ok) {
@@ -74,19 +89,28 @@ await page.evaluate(() => { window.__GRIAN__.DayNight.t = 0.0; });
 await page.waitForTimeout(1200);
 await page.screenshot({ path: path.join(OUT, 'shot-r3d-night.png') });
 
-// แดนมาร์ กลางคืน — ลาว
+// แดนมาร กลางคืน — ลาว
 await page.evaluate(() => {
   const G = window.__GRIAN__;
-  G.travelTo('hell');
+  G.state.player.maxHp = 999; G.state.player.hp = 999; G.state.player.dead = false; G.UI.hideDeath(); G.travelTo('hell');
   G.DayNight.t = 0.02;
 });
 await page.waitForTimeout(2000);
 await page.screenshot({ path: path.join(OUT, 'shot-r3d-hell.png') });
 
+// แดนเซิร์ฟเถื่อน (โซน 3)
+await page.evaluate(() => {
+  const G = window.__GRIAN__;
+  G.state.player.maxHp = 999; G.state.player.hp = 999; G.state.player.dead = false; G.UI.hideDeath(); G.travelTo('cyber');
+  G.DayNight.t = 0.05;
+});
+await page.waitForTimeout(2000);
+await page.screenshot({ path: path.join(OUT, 'shot-r3d-cyber.png') });
+
 // หีบ + เอฟเฟกต์
 await page.evaluate(() => {
   const G = window.__GRIAN__;
-  G.travelTo('field');
+  G.state.player.maxHp = 999; G.state.player.hp = 999; G.state.player.dead = false; G.UI.hideDeath(); G.travelTo('field');
   G.DayNight.t = 0.45;
   G.state.player.mp = 999;
   setTimeout(() => G.handlers.onSkill('ult'), 100);
@@ -99,6 +123,7 @@ const stat = await page.evaluate(() => {
   return {
     ok: !!G.GFX3D.ok,
     obstacles: G.GFX3D.obstacles ? G.GFX3D.obstacles.length : 0,
+    obstacleSids: (G.GFX3D.obstacles || []).map((o) => o.g.sid),
     entities: Object.keys(G.GFX3D.entityPool || {}).length,
     lights: G.GFX3D.lightPool.filter((l) => l.visible).length,
     blobShadows: G.GFX3D.shadowMesh ? G.GFX3D.shadowMesh.count : -1,

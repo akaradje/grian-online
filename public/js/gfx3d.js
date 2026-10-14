@@ -44,7 +44,55 @@ const MAX_LIGHTS = 8;
 const MAX_PARTICLES = 320;
 const MAX_SHADOWS = 96;
 const MAX_FX3D = 18;
-const NO_BILLBOARD = new Set([T.CHEST, T.PORTAL, T.WATER, T.SHALLOW, T.LAVA, T.DATASTREAM, T.GLITCH]);
+const NO_BILLBOARD = new Set([
+  T.GRASS, T.FLOWER, T.DIRT, T.PATH, T.WATER, T.SAND,
+  T.SHALLOW, T.TALLGRASS, T.STONEPATH, T.BRIDGE,
+  T.PEBBLE, T.MUSHROOM, T.ASH, T.LAVA, T.BONE,
+  T.CYBERFLOOR, T.DATASTREAM, T.GLITCH,
+  T.WALL, T.ROOF, T.DOOR, T.ROOFTOP, T.WALLWIN, T.CAVE,
+  T.CHEST, T.PORTAL,
+]);
+
+// สีพื้นหลังของไทล์พร็อพที่ต้องการตัดโปร่งใสเมื่อทำเป็น 3D Billboard Cutout
+const BG_RGB = new Set([
+  "63,143,74", "74,161,85", "53,122,63",
+  "47,107,57", "58,125,68",
+  "168,145,107", "189,166,132",
+  "58,48,64", "70,58,76", "46,38,52", "84,70,96",
+  "20,29,51", "28,40,70", "14,21,38",
+]);
+
+function makeCutoutCanvas(srcCanvas) {
+  const w = srcCanvas.width, h = srcCanvas.height;
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const g = c.getContext("2d");
+  g.drawImage(srcCanvas, 0, 0);
+  const img = g.getImageData(0, 0, w, h);
+  const d = img.data;
+  const vis = new Uint8Array(w * h);
+  const q = [];
+  const pushIfBg = (x, y) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    const idx = y * w + x;
+    if (vis[idx]) return;
+    const p = idx * 4;
+    if (BG_RGB.has(`${d[p]},${d[p+1]},${d[p+2]}`)) {
+      vis[idx] = 1;
+      d[p + 3] = 0;
+      q.push(x, y);
+    }
+  };
+  for (let x = 0; x < w; x++) { pushIfBg(x, 0); pushIfBg(x, h - 1); }
+  for (let y = 0; y < h; y++) { pushIfBg(0, y); pushIfBg(w - 1, y); }
+  while (q.length) {
+    const y = q.pop(), x = q.pop();
+    pushIfBg(x + 1, y); pushIfBg(x - 1, y);
+    pushIfBg(x, y + 1); pushIfBg(x, y - 1);
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
 
 const _skyNight = new THREE.Color(0x080b18);
 const _skyDay = new THREE.Color(0x8fc3ff);
@@ -297,9 +345,10 @@ export const GFX3D = {
 
     const geo = new THREE.PlaneGeometry(W, H, world.w * 2, world.h * 2);
     geo.rotateX(-Math.PI / 2);
+    geo.translate(W / 2, 0, H / 2);
     const posA = geo.attributes.position;
     for (let i = 0; i < posA.count; i++) {
-      posA.setY(i, this.sampleH(posA.getX(i) + W / 2, posA.getZ(i) + H / 2));
+      posA.setY(i, this.sampleH(posA.getX(i), posA.getZ(i)));
     }
     geo.computeVertexNormals();
 
@@ -320,9 +369,9 @@ export const GFX3D = {
           'uniform sampler2D uTiles; uniform vec2 uGrid; uniform vec2 uMapSize;\n' +
           'uniform float uTime; uniform vec3 uSunCol; uniform float uSunI; uniform vec3 uSunDir;')
         .replace('#include <map_fragment>', '#include <map_fragment>\n' +
-          'vec2 wpos = vMapUv * uMapSize;\n' +
-          'vec2 gv = wpos / uGrid;\n' +
-          'float id = texture2D(uTiles, floor(gv) / uGrid + 0.5 / uGrid).r * 255.0;\n' +
+          'vec2 uvTile = vec2(vMapUv.x, 1.0 - vMapUv.y);\n' +
+          'vec2 wpos = uvTile * uMapSize;\n' +
+          'float id = texture2D(uTiles, (floor(uvTile * uGrid) + 0.5) / uGrid).r * 255.0;\n' +
           'if (abs(id - ' + T.WATER + '.0) < 0.5 || abs(id - ' + T.DATASTREAM + '.0) < 0.5) {\n' +
           '  float k1 = 0.11, k2x = 0.05, k2y = 0.09, k3x = -0.04, k3y = 0.16;\n' +
           '  float p1 = wpos.x * k1 + uTime * 1.6;\n' +
@@ -368,7 +417,7 @@ export const GFX3D = {
     }
     for (const g of groups.values()) {
       const mat = new THREE.MeshBasicMaterial({
-        map: this._tex(g.sp.frames[0]), transparent: true, alphaTest: 0.5, side: THREE.FrontSide,
+        map: this._tex(makeCutoutCanvas(g.sp.frames[0]), false), transparent: true, alphaTest: 0.5, side: THREE.DoubleSide,
       });
       mat.userData.sh = null;
       mat.onBeforeCompile = (sh) => {
@@ -393,7 +442,7 @@ export const GFX3D = {
     this.chestMeshes = (world.chests || []).map((c) => {
       const sp = SPR['t_chest'];
       const m = new THREE.Mesh(new THREE.PlaneGeometry(sp.w, sp.h), new THREE.MeshLambertMaterial({
-        map: this._tex(sp.frames[0]), transparent: true, alphaTest: 0.5, side: THREE.FrontSide,
+        map: this._tex(makeCutoutCanvas(sp.frames[0]), false), transparent: true, alphaTest: 0.5, side: THREE.DoubleSide,
       }));
       m.position.set(c.x + 8, this.sampleH(c.x + 8, c.y + 4) + 6, c.y + 4);
       m.userData.chest = c;
@@ -403,7 +452,7 @@ export const GFX3D = {
     this.portalMeshes = (world.portals || []).map((pt) => {
       const sp = SPR['t_portal'];
       const m = new THREE.Mesh(new THREE.PlaneGeometry(sp.w, sp.h), new THREE.MeshLambertMaterial({
-        map: this._tex(sp.frames[Math.floor(state_time() * 3) % 2]), transparent: true, alphaTest: 0.5, side: THREE.FrontSide,
+        map: this._tex(makeCutoutCanvas(sp.frames[Math.floor(state_time() * 3) % 2]), false), transparent: true, alphaTest: 0.5, side: THREE.DoubleSide,
       }));
       m.position.set(pt.x + 8, this.sampleH(pt.x + 8, pt.y + 6) + 6, pt.y + 6);
       this.scene.add(m);
@@ -538,9 +587,9 @@ export const GFX3D = {
     let mesh = pool.free.pop();
     if (!mesh) {
       const mat = new THREE.MeshLambertMaterial({
-        map: this._tex(sp.frames[0]), emissiveMap: this._tex(sp.frames[0]),
+        map: this._tex(sp.frames[0], false), emissiveMap: this._tex(sp.frames[0], false),
         emissive: 0xffffff, emissiveIntensity: 0.25,
-        transparent: true, alphaTest: 0.5, side: THREE.FrontSide,
+        transparent: true, alphaTest: 0.5, side: THREE.DoubleSide,
       });
       mesh = new THREE.Mesh(new THREE.PlaneGeometry(sp.w, sp.h), mat);
       mesh.userData.sprId = sprId;
@@ -556,7 +605,7 @@ export const GFX3D = {
     if (!sp) return null;
     const key = sprId + ':' + frame;
     if (!this.frameCache[key]) {
-      this.frameCache[key] = this._tex(sp.frames[Math.min(frame, sp.frames.length - 1)] || sp.frames[0]);
+      this.frameCache[key] = this._tex(sp.frames[Math.min(frame, sp.frames.length - 1)] || sp.frames[0], false);
     }
     return this.frameCache[key];
   },
@@ -574,7 +623,7 @@ export const GFX3D = {
       if (!mesh) continue;
       const sp = SPR[ent.sprId] || SPR['dummy'];
       const h = this.heightAt(ent.x, ent.y);
-      mesh.position.set(ent.x, h + (ent.headUp || 0) + sp.h * 0.5 - 6, ent.y);
+      mesh.position.set(ent.x, h + (ent.headUp || 0) + sp.h * 0.5 - 1.2, ent.y);
       mesh.quaternion.copy(camQ);
       mesh.scale.x = ent.flip ? -1 : 1;
       if (mesh.userData.frame !== ent.frame) {
@@ -613,7 +662,7 @@ export const GFX3D = {
           const yaw = Math.atan2(cx - it.x, cz - it.z);
           this._q.setFromAxisAngle(this._upAxis, yaw);
           this._m4.compose(
-            this._v.set(it.x, it.h + sp.h * 0.5 - 3, it.z),
+            this._v.set(it.x, it.h + sp.h * 0.5 - 1.2, it.z),
             this._q,
             this._one,
           );
