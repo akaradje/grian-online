@@ -1356,20 +1356,23 @@ const v2Test = await page.evaluate(async () => {
     }),
   });
   await G.Net.sendSync();
+  const wsModeOk = G.Net.mode === "ws" || G.Net.connected;
+  await G.Net.switchToSSE();
+  const sseModeOk = G.Net.mode === "sse" && G.Net.connected;
   const stRes = await fetch('/api/status').then((r) => r.json());
   const sameMapPeers = G.Net.sameMapPeers(S).length;
   const archMeshes = (G.GFX3D.archMeshes || []).length;
   return {
     fullSet,
     setBoosted: hpAfterSet > hpBeforeSet,
-    netConnected: G.Net.connected,
+    netConnected: G.Net.connected, wsModeOk, sseModeOk,
     onlineCount: stRes.onlinePlayers || 0,
     sameMapPeers,
     archMeshes,
   };
 });
-if (v2Test.fullSet && v2Test.setBoosted && v2Test.netConnected && v2Test.onlineCount >= 2 && v2Test.sameMapPeers >= 1 && v2Test.archMeshes >= 3) {
-  ok(`ระบบออนไลน์ v2.0.0 ทำงานครบ: Multiplayer (${v2Test.onlineCount} คนในเซิร์ฟ) · โบนัสเซ็ตอุปกรณ์ 3 ชิ้น · 3D Architecture (${v2Test.archMeshes} กลุ่มโมเดล)`);
+if (v2Test.fullSet && v2Test.setBoosted && v2Test.netConnected && v2Test.wsModeOk && v2Test.sseModeOk && v2Test.onlineCount >= 2 && v2Test.sameMapPeers >= 1 && v2Test.archMeshes >= 3) {
+  ok(`ระบบออนไลน์ v2.0.0 ทำงานครบ: Multiplayer WS+SSE Fallback (${v2Test.onlineCount} คนในเซิร์ฟ) · โบนัสเซ็ตอุปกรณ์ 3 ชิ้น · 3D Architecture (${v2Test.archMeshes} กลุ่มโมเดล)`);
 } else bad('ระบบ v2.0.0 ไม่ครบ', JSON.stringify(v2Test));
 
 /* ── 25. ปล่อยรันต่อเพื่อจับ error ที่หลุด ── */

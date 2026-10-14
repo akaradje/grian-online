@@ -191,7 +191,7 @@ export function createMonster(id, x, y, elite) {
     exp: d.exp, gold: d.gold, boss: !!d.boss, elite: e,
     x, y, prevX: x, prevY: y, dir: 1, frame: 0, animT: 0,
     st: 'idle', stun: 0, atkCd: 0, wanderT: 0, wanderDir: { x: 0, y: 0 },
-    home: { x, y }, dead: false, hitFlash: 0, blinkT: 2, tauntT: 0, engaged: false,
+    home: { x, y }, dead: false, hitFlash: 0, blinkT: 2, tauntT: 0, taunt: d.taunt || null, engaged: false,
     abil: null, abilCd: 3.5,
   };
   if (e) {
@@ -1054,8 +1054,9 @@ function moveMonster(state, m, dx, dy, dt) {
   const sp = m.spd * dt;
   const nx = m.x + (dx / len) * sp;
   const ny = m.y + (dy / len) * sp;
-  if (!state.world.solidAtPx(nx, m.y)) m.x = nx;
-  if (!state.world.solidAtPx(m.x, ny)) m.y = ny;
+  const stuckInSolid = state.world.solidAtPx(m.x, m.y);
+  if (stuckInSolid || !state.world.solidAtPx(nx, m.y)) m.x = nx;
+  if (stuckInSolid || !state.world.solidAtPx(m.x, ny)) m.y = ny;
   if (dx !== 0) m.dir = Math.sign(dx);
 }
 

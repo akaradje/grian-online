@@ -5,11 +5,17 @@
 import path from 'node:path';
 import fs from 'node:fs';
 
-const _pw = await import(process.env.PLAYWRIGHT_PATH);
+const PW = process.env.PLAYWRIGHT_PATH || 'playwright';
+let _pw;
+try { _pw = await import(PW); } catch (e) { _pw = await import('./webdriver-playwright.mjs'); }
 const chromium = _pw.chromium || _pw.default?.chromium;
 
 function findChromium() {
-  const root = path.join(process.env.LOCALAPPDATA, 'ms-playwright');
+  if (process.env.PLAYWRIGHT_CHROME) return process.env.PLAYWRIGHT_CHROME;
+  for (const sysBin of ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome']) {
+    if (fs.existsSync(sysBin)) return sysBin;
+  }
+  const root = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
   const c = [];
   for (const d of fs.readdirSync(root)) {
     if (!d.startsWith('chromium-')) continue;

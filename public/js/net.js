@@ -1,195 +1,355 @@
 /* ═══════════════════════════════════════════════════════════
-   net.js — เคลียนต์ multiplayer แบบเรียลไทม์ (zero dependency)
-   · หลัก: WebSocket (/ws) · fallback: SSE (/api/stream) + POST (/api/*)
-   · ซิงค์ผู้เล่นข้ามแท็บ/เครื่อง: เดิน ตีมอน ร่ายสกิล แชทโลก PK
+   net.js — ระบบเครือข่ายผู้เล่นหลายคนแบบเรียลไทม์ (Real-Time Multiplayer Client v2.0.1)
+   รองรับ:
+   1) Native WebSocket (/ws) สำหรับซิงค์ตำแหน่ง ท่าโจมตี และแชทโลกแบบความหน่วงต่ำ
+   2) Server-Sent Events (/api/stream) + HTTP POST (/api/sync, /api/chat, /api/action)
+      เป็น Fallback อัตโนมัติเมื่อรันหลัง Reverse Proxy ที่บล็อก WebSocket
+   3) การเกลี่ยตำแหน่งผู้เล่นอื่นแบบนุ่มนวล (Smooth Lerp Interpolation)
    ═══════════════════════════════════════════════════════════ */
 
+import { playerAura } from './entities.js';
+import { Particles } from './fx.js';
+
 export const Net = {
-  peers: new Map(),        // peerId -> peer state (จากเซิร์ฟเวอร์)
-  connected: false,
-  mode: 'ws',              // 'ws' | 'sse'
-  myId: null,
-  _started: false,
   state: null,
+  peerId: 'p_' + Math.random().toString(36).slice(2, 10),
+  peers: new Map(),
+  connected: false,
+  mode: 'offline', // 'ws' | 'sse' | 'offline'
+  ws: null,
+  es: null,
+  _syncTimer: 0,
+  _lastSentKey: '',
+  _seenChats: new Set(),
+  _reconnTimer: null,
 
   init(state) {
-    if (this._started) return;
-    this._started = true;
     this.state = state;
-    this.myId = 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    this._syncT = 0;
-    this._connectWs();
-    // ถ้า WS ต่อไม่ได้ใน 2.5 วิ (reverse proxy บล็อก upgrade) → SSE fallback
-    this._sseTimer = setTimeout(() => { if (!this.connected) this._connectSse(); }, 2500);
+    if (typeof window === 'undefined') return;
+    this._connectWS();
+    window.addEventListener('beforeunload', () => {
+      try {
+        const payload = JSON.stringify({ type: 'leave', peerId: this.peerId });
+        if (this.ws && this.ws.readyState === 1) this.ws.send(payload);
+        else if (navigator.sendBeacon) navigator.sendBeacon('/api/sync', payload);
+      } catch (e) {}
+    });
   },
 
-  /* ── WebSocket (/ws) ── */
-  _connectWs() {
+  _connectWS() {
+    if (typeof WebSocket === 'undefined') {
+      this._connectSSE();
+      return;
+    }
     try {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${proto}//${location.host}/ws`);
       this.ws = ws;
-      ws.onopen = () => {
+      let opened = false;
+
+      const fallbackTimeout = setTimeout(() => {
+        if (!opened) {
+          try { ws.close(); } catch (e) {}
+          this._connectSSE();
+        }
+      }, 2500);
+
+      ws.addEventListener('open', () => {
+        opened = true;
+        clearTimeout(fallbackTimeout);
         this.connected = true;
         this.mode = 'ws';
-        clearTimeout(this._sseTimer);
-        if (this.state?.screen === 'play') this.sendSync();
-      };
-      ws.onmessage = (ev) => {
-        try { this._onMsg(JSON.parse(ev.data)); } catch (e) {}
-      };
-      ws.onclose = () => {
-        if (this.mode === 'ws') { this.connected = false; this._connectSse(); }
-      };
-      ws.onerror = () => {};
-    } catch (e) {
-      this._connectSse();
-    }
-  },
+        this.sendSync();
+      });
 
-  /* ── SSE fallback (/api/stream) — EventSource ต่อเองอัตโนมัติ ── */
-  _connectSse() {
-    if (this.mode === 'sse' && this.sse) return;
-    this.mode = 'sse';
-    try {
-      const sse = new EventSource('/api/stream');
-      this.sse = sse;
-      sse.onopen = () => { this.connected = true; };
-      sse.onmessage = (ev) => {
-        try { this._onMsg(JSON.parse(ev.data)); } catch (e) {}
-      };
-      sse.onerror = () => { this.connected = false; };   // EventSource retry เอง
-    } catch (e) {
-      this.connected = false;
-    }
-  },
+      ws.addEventListener('message', (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          this._handleServerMsg(msg);
+        } catch (e) {}
+      });
 
-  /* ── ข้อความจากเซิร์ฟเวอร์ ── */
-  _onMsg(m) {
-    if (!m || !m.type) return;
-    switch (m.type) {
-      case 'init':
-        this.peers.clear();
-        for (const p of m.peers || []) if (p.id !== this.myId) this.peers.set(p.id, p);
-        for (const c of m.recentChats || []) this.state?.onNetChat?.(c);
-        this.connected = true;
-        break;
-      case 'peer_update':
-        if (m.peer && m.peer.id !== this.myId) {
-          const old = this.peers.get(m.peer.id);
-          // เก็บ renderX/Y ไว้คั่นฯ (interpolation ไม่กระโดดตอนอัปเดต)
-          this.peers.set(m.peer.id, old ? { ...old, ...m.peer } : m.peer);
+      ws.addEventListener('close', () => {
+        clearTimeout(fallbackTimeout);
+        if (this.mode === 'ws') {
+          this.connected = false;
+          this.mode = 'offline';
         }
-        break;
-      case 'peers':
-        this.peers.clear();
-        for (const p of m.list || []) if (p.id !== this.myId) this.peers.set(p.id, p);
-        break;
-      case 'peer_leave':
-        this.peers.delete(m.peerId);
-        break;
-      case 'chat':
-        this.state?.onNetChat?.(m);
-        break;
-      case 'action':
-        if (m.peerId && m.peerId !== this.myId) {
-          const pr = this.peers.get(m.peerId);
-          if (pr) pr.lastAction = m;   // เก็บไว้ (PK/เอฟเฟกต์อนาคต)
+        if (!opened) {
+          this._connectSSE();
+        } else {
+          clearTimeout(this._reconnTimer);
+          this._reconnTimer = setTimeout(() => this._connectWS(), 3000);
         }
-        break;
+      });
+
+      ws.addEventListener('error', () => {
+        if (!opened) {
+          clearTimeout(fallbackTimeout);
+          try { ws.close(); } catch (e) {}
+          this._connectSSE();
+        }
+      });
+    } catch (e) {
+      this._connectSSE();
     }
   },
 
-  /* ── เฟรมละครั้ง: sync ตัวเอง ~8 ครั้ง/วินาที + คั่นตำแหน่ง peer ── */
-  update(state, dt) {
-    this._syncT = (this._syncT || 0) - dt;
-    if (state.screen === 'play' && state.player && this._syncT <= 0) {
-      this._syncT = 0.125;
-      this.sendSync();
+  _connectSSE() {
+    if (typeof EventSource === 'undefined') return Promise.resolve(false);
+    return new Promise((resolve) => {
+      try {
+        if (this.es) { try { this.es.close(); } catch (e) {} }
+        const es = new EventSource('/api/stream');
+        this.es = es;
+        let resolved = false;
+        const done = (ok) => { if (!resolved) { resolved = true; resolve(ok); } };
+        setTimeout(() => done(this.connected), 2000);
+
+        es.addEventListener('open', () => {
+          this.connected = true;
+          this.mode = 'sse';
+          this.sendSync().then(() => done(true));
+        });
+        es.addEventListener('message', (ev) => {
+          this.connected = true;
+          this.mode = 'sse';
+          try {
+            const msg = JSON.parse(ev.data);
+            this._handleServerMsg(msg);
+          } catch (e) {}
+          done(true);
+        });
+        es.addEventListener('error', () => {
+          done(false);
+        });
+      } catch (e) {
+        resolve(false);
+      }
+    });
+  },
+
+  /** สลับไปใช้โหมด SSE Fallback ทันที (สำหรับเครือข่ายที่บล็อก WS หรือใช้ทดสอบอัตโนมัติ) */
+  async switchToSSE() {
+    clearTimeout(this._reconnTimer);
+    if (this.ws) {
+      this.mode = 'sse';
+      try { this.ws.close(); } catch (e) {}
+      this.ws = null;
     }
-    for (const p of this.peers.values()) {
-      if (p.renderX === undefined) { p.renderX = p.x; p.renderY = p.y; }
-      const k = Math.min(1, dt * 10);
-      p.renderX += (p.x - p.renderX) * k;
-      p.renderY += (p.y - p.renderY) * k;
+    const ok = await this._connectSSE();
+    await this.sendSync();
+    return ok;
+  },
+
+  _upsertPeer(p) {
+    if (!p || !p.id || p.id === this.peerId) return;
+    const prev = this.peers.get(p.id);
+    if (prev) {
+      p.renderX = prev.renderX ?? prev.x ?? p.x;
+      p.renderY = prev.renderY ?? prev.y ?? p.y;
+      p.hitFlash = prev.hitFlash || 0;
+    } else {
+      p.renderX = p.x;
+      p.renderY = p.y;
+      p.hitFlash = 0;
+    }
+    this.peers.set(p.id, p);
+  },
+
+  _handleServerMsg(msg) {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'init') {
+      if (Array.isArray(msg.peers)) {
+        for (const p of msg.peers) this._upsertPeer(p);
+      }
+      if (Array.isArray(msg.recentChats)) {
+        for (const c of msg.recentChats) this._deliverChat(c);
+      }
+      return;
+    }
+    if (msg.type === 'peers' && Array.isArray(msg.list)) {
+      const keep = new Set();
+      for (const p of msg.list) {
+        if (p.id && p.id !== this.peerId) {
+          keep.add(p.id);
+          this._upsertPeer(p);
+        }
+      }
+      for (const k of this.peers.keys()) {
+        if (!keep.has(k)) this.peers.delete(k);
+      }
+      return;
+    }
+    if (msg.type === 'peer_update' && msg.peer) {
+      this._upsertPeer(msg.peer);
+      return;
+    }
+    if (msg.type === 'peer_leave' && msg.peerId) {
+      this.peers.delete(msg.peerId);
+      return;
+    }
+    if (msg.type === 'chat' && msg.text) {
+      this._deliverChat(msg);
+      return;
+    }
+    if (msg.type === 'action' && msg.peerId && msg.peerId !== this.peerId) {
+      const peer = this.peers.get(msg.peerId);
+      if (peer && this.state && peer.mapId === this.state.mapId) {
+        peer.hitFlash = 0.18;
+        Particles.spawn('slash', (peer.renderX ?? peer.x) + (peer.dir || 1) * 12, (peer.renderY ?? peer.y) - 6, { dir: peer.dir || 1 });
+      }
     }
   },
 
-  _myPeer(state) {
-    const p = state.player;
+  _deliverChat(c) {
+    if (!c || !c.text) return;
+    if (c.peerId && c.peerId === this.peerId) return;
+    const key = `${c.ts || 0}:${c.name}:${c.text}`;
+    if (this._seenChats.has(key)) return;
+    this._seenChats.add(key);
+    if (this._seenChats.size > 120) {
+      const first = this._seenChats.values().next().value;
+      this._seenChats.delete(first);
+    }
+    if (this.state && typeof this.state.onNetChat === 'function') {
+      this.state.onNetChat(c);
+    }
+  },
+
+  _buildPeerPayload() {
+    const s = this.state;
+    const p = s?.player;
+    if (!p) return null;
+    const aura = playerAura(p);
     return {
-      id: this.myId,
+      id: this.peerId,
       name: p.name || 'ผู้กล้าออนไลน์',
       clsId: p.clsId || 'loot',
       advId: p.advId || null,
       lvl: p.lvl || 1,
-      mapId: state.mapId || 'field',
-      x: Math.round(p.x), y: Math.round(p.y),
+      mapId: s.mapId || 'field',
+      x: Math.round(p.x || 768),
+      y: Math.round(p.y || 544),
       dir: p.dir === -1 ? -1 : 1,
       frame: p.frame ? 1 : 0,
-      hp: Math.max(0, Math.round(p.hp)),
-      maxHp: Math.max(1, Math.round(p.maxHp)),
+      hp: Math.round(p.hp || 100),
+      maxHp: Math.round(p.maxHp || 100),
       atk: Math.round(p.atk || 15),
-      auraLvl: Math.max(p.equip?.weapon?.lvl || 0, p.equip?.armor?.lvl || 0, p.equip?.acc?.lvl || 0),
-      pvpMode: !!state.pvpMode,
-      petId: p.activePet || null,
+      auraLvl: aura ? aura.min : 0,
+      pvpMode: !!s.pvpMode,
+      petId: p.activePetId || null,
     };
   },
 
-  /* ── ส่งสถานะตัวเองขึ้นเซิร์ฟเวอร์ (ตอบกลับ peers ทั้งหมด) ── */
-  sendSync() {
-    const state = this.state;
-    if (!state || !state.player || state.screen !== 'play') return;
-    const body = { type: 'sync', peer: this._myPeer(state) };
-    fetch('/api/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-      .then((r) => r.json())
-      .then((res) => {
-        if (res && res.peers) {
-          for (const pr of res.peers) {
-            if (pr.id === this.myId) continue;
-            const old = this.peers.get(pr.id);
-            this.peers.set(pr.id, old ? { ...old, ...pr } : pr);
-          }
+  async sendSync() {
+    const peer = this._buildPeerPayload();
+    if (!peer) return null;
+    const msg = { type: 'sync', peer };
+    if (this.ws && this.ws.readyState === 1 && this.mode === 'ws') {
+      try { this.ws.send(JSON.stringify(msg)); } catch (e) {}
+    }
+    try {
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(msg),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.connected = true;
+        if (this.mode === 'offline') this.mode = 'sse';
+        if (Array.isArray(data.peers)) {
+          for (const pr of data.peers) this._upsertPeer(pr);
         }
-      })
-      .catch(() => {});
+        return data;
+      }
+    } catch (e) {}
+    return null;
   },
 
-  /* ── บroudcast การกระทำ (attack / skill) ── */
-  sendAction(kind, opts = {}) {
-    const state = this.state;
-    if (!state || !state.player) return;
-    const p = state.player;
-    fetch('/api/action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'action', peerId: this.myId, mapId: state.mapId || 'field',
-        kind, skillId: opts.skillId || null,
-        x: Math.round(p.x), y: Math.round(p.y),
-        targetPeerId: opts.targetPeerId || null, dmg: opts.dmg || 0,
-      }),
-    }).catch(() => {});
-  },
-
-  /* ── แชทโลก ── */
   sendChat(ch, name, text) {
+    if (!text) return;
+    const msg = { type: 'chat', ch: ch || 'world', name: name || 'ผู้กล้า', text, peerId: this.peerId };
+    if (this.ws && this.ws.readyState === 1 && this.mode === 'ws') {
+      try { this.ws.send(JSON.stringify(msg)); return; } catch (e) {}
+    }
     fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'chat', ch, name, text, peerId: this.myId }),
+      body: JSON.stringify(msg),
     }).catch(() => {});
   },
 
-  /* ── ผู้เล่นในแมพเดียวกัน (สำหรับเรนเดอร์ + nametag + แผง V) ── */
+  sendAction(kind, extra = {}) {
+    const p = this.state?.player;
+    const msg = {
+      type: 'action',
+      peerId: this.peerId,
+      mapId: this.state?.mapId || 'field',
+      kind: kind || 'attack',
+      x: Math.round(p?.x || 0),
+      y: Math.round(p?.y || 0),
+      ...extra,
+    };
+    if (this.ws && this.ws.readyState === 1 && this.mode === 'ws') {
+      try { this.ws.send(JSON.stringify(msg)); return; } catch (e) {}
+    }
+    fetch('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(msg),
+    }).catch(() => {});
+  },
+
   sameMapPeers(state) {
-    const mid = state?.mapId || 'field';
+    const mapId = (state || this.state)?.mapId || 'field';
     const out = [];
-    for (const p of this.peers.values()) if (p.mapId === mid) out.push(p);
+    for (const peer of this.peers.values()) {
+      if (peer.id !== this.peerId && (peer.mapId || 'field') === mapId) {
+        out.push(peer);
+      }
+    }
     return out;
+  },
+
+  update(state, dt) {
+    this.state = state;
+    const k = Math.min(1, dt * 12);
+    for (const peer of this.peers.values()) {
+      const tx = peer.x ?? 768;
+      const ty = peer.y ?? 544;
+      if (peer.renderX === undefined || Math.hypot(tx - peer.renderX, ty - peer.renderY) > 96) {
+        peer.renderX = tx;
+        peer.renderY = ty;
+      } else {
+        peer.renderX += (tx - peer.renderX) * k;
+        peer.renderY += (ty - peer.renderY) * k;
+      }
+      if (peer.hitFlash > 0) peer.hitFlash = Math.max(0, peer.hitFlash - dt);
+    }
+
+    if (state.screen !== 'play' || !state.player) return;
+    this._syncTimer += dt;
+    const p = state.player;
+    const curKey = `${state.mapId}:${Math.round(p.x)}:${Math.round(p.y)}:${p.dir}:${p.frame}:${Math.round(p.hp)}:${p.lvl}`;
+    const moved = curKey !== this._lastSentKey;
+    const interval = moved ? 0.14 : 1.5;
+    if (this._syncTimer >= interval) {
+      this._syncTimer = 0;
+      this._lastSentKey = curKey;
+      const peer = this._buildPeerPayload();
+      if (peer) {
+        if (this.ws && this.ws.readyState === 1 && this.mode === 'ws') {
+          try { this.ws.send(JSON.stringify({ type: 'sync', peer })); } catch (e) {}
+        } else if (this.mode === 'sse') {
+          fetch('/api/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'sync', peer }),
+          }).catch(() => {});
+        }
+      }
+    }
   },
 };

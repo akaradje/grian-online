@@ -202,8 +202,8 @@ function step(dt) {
       UI.toast('เครื่องหนัก — ลดคุณภาพเอฟเฟกต์อัตโนมัติ (ปิดได้ที่ตั้งค่า)', 'bad');
       state._aqLo = 0;
     }
-    state._aqLo2 = Perf.fps < 70 && GFX3D.ok ? (state._aqLo2 || 0) + dt : 0;
-    if (state._aqLo2 > 4 && GFX3D.ok) {
+    state._aqLo2 = (Perf.fps < 24 && GFX3D.ok && Settings.get('render3d') === 'auto') ? (state._aqLo2 || 0) + dt : 0;
+    if (state._aqLo2 > 5 && GFX3D.ok) {
       GFX3D.ok = false;
       GFX3D.reason = 'off';
       UI.toast('เครื่อง/การ์ดจอรัน 3D ไม่ทัน — สลับไป 2D (เปิดบังคับได้ที่ตั้งค่า)', 'bad');
@@ -768,9 +768,19 @@ function updateChase(state, dt) {
   }
   state._chaseT = (state._chaseT || 0) - dt;
   if (state._chaseT <= 0 || !p.path) {
-    state._chaseT = 0.5;
+    state._chaseT = 0.35;
     const path = finder.find(p.x, p.y, m.x, m.y);
-    if (path) { p.path = path; p.pathIdx = 0; }
+    if (path && path.length) {
+      const last = path[path.length - 1];
+      if (Math.hypot(last.x - p.x, last.y - p.y) < 6 && d > ATTACK_RANGE + 6) {
+        // เป้าหมายอยู่ในสิ่งกีดขวาง/น้ำที่เดินเข้าไม่ถึง — ดึงมอนออกมาหาขอบที่ยืนได้
+        const step = Math.min(18, d - ATTACK_RANGE);
+        m.x += ((p.x - m.x) / d) * step;
+        m.y += ((p.y - m.y) / d) * step;
+      } else {
+        p.path = path; p.pathIdx = 0;
+      }
+    }
   }
 }
 
@@ -1524,9 +1534,10 @@ state.onPlayerDeath = (m) => {
   UI.showDeath(m.name, deathQuote(state));
   sysMsg(state, `${state.player.name} ถึงแก่กรรมโดย ${m.name}`);
 };
-state.onBossSpawn = () => {
-  UI.bossAlert('⚠ บอสโลกปรากฏตัวแล้วที่ลานตะวันออก — ครูฝึกสอนการบ้าน');
-  UI.toast('บอสโลกเกิดแล้ว! ไปที่ลานตะวันออก (ดูมินิแมป)', 'bad');
+state.onBossSpawn = (b) => {
+  const bName = b?.name || m0Name();
+  UI.bossAlert(`⚠ บอสโลกปรากฏตัวแล้ว — ${bName}!`);
+  UI.toast(`บอสโลก "${bName}" เกิดแล้ว! (ดูตำแหน่งในมินิแมป)`, 'bad');
   Audio.play('boss');
   Camera.kick(10, 0.8);
 };

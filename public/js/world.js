@@ -96,6 +96,49 @@ export class World {
     this.buildMinimap();
   }
 
+  /* ── ตัดสีพื้นหญ้าออกจากสไปรต์พร็อพเมื่อวางบนพื้นหิน/ดิน/แอช/ไซเบอร์ ── */
+  _propCutout(canvas) {
+    if (canvas._cutout) return canvas._cutout;
+    const w = canvas.width, h = canvas.height;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const g = c.getContext('2d');
+    g.drawImage(canvas, 0, 0);
+    const img = g.getImageData(0, 0, w, h);
+    const d = img.data;
+    const bg = new Set(['63,143,74', '74,161,85', '53,122,63', '47,107,57', '58,125,68', '58,48,64', '70,58,76']);
+    const vis = new Uint8Array(w * h);
+    const q = [];
+    const push = (x, y) => {
+      if (x < 0 || y < 0 || x >= w || y >= h) return;
+      const i = y * w + x;
+      if (vis[i]) return;
+      const p = i * 4;
+      if (bg.has(`${d[p]},${d[p + 1]},${d[p + 2]}`)) { vis[i] = 1; d[p + 3] = 0; q.push(x, y); }
+    };
+    for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
+    for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+    while (q.length) {
+      const y = q.pop(), x = q.pop();
+      push(x + 1, y); push(x - 1, y); push(x, y + 1); push(x, y - 1);
+    }
+    g.putImageData(img, 0, 0);
+    canvas._cutout = c;
+    return c;
+  }
+
+  _underFloorTile(x, y, t) {
+    if (t !== T.LAMP && t !== T.BARREL && t !== T.STATUE && t !== T.CHEST && t !== T.SIGN && t !== T.FENCE && t !== T.PORTAL) return null;
+    const neighbors = [this.get(x - 1, y), this.get(x + 1, y), this.get(x, y - 1), this.get(x, y + 1)];
+    if (neighbors.includes(T.STONEPATH)) return T.STONEPATH;
+    if (neighbors.includes(T.DIRT)) return T.DIRT;
+    if (neighbors.includes(T.PATH)) return T.PATH;
+    if (this.cyber) return this.inVillage(x * CONFIG.TILE, y * CONFIG.TILE) ? T.STONEPATH : T.CYBERFLOOR;
+    if (this.hell) return this.inVillage(x * CONFIG.TILE, y * CONFIG.TILE) ? T.STONEPATH : T.ASH;
+    if (this.inVillage(x * CONFIG.TILE, y * CONFIG.TILE)) return T.DIRT;
+    return T.GRASS;
+  }
+
   /* ═══════════ อบพื้นทั้งแผนที่เป็นแคนวาสเดียว ═══════════ */
   bakeGround() {
     const TS = CONFIG.TILE;
@@ -107,7 +150,22 @@ export class World {
 
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
-        const spr = SPR[SPRITE_OF_TILE[this.get(x, y)]];
+        const t = this.get(x, y);
+        const under = this._underFloorTile(x, y, t);
+        if (under !== null) {
+          const uspr = SPR[SPRITE_OF_TILE[under]];
+          if (uspr) {
+            const uf = uspr.anim ? 0 : (tileHash(x, y) % uspr.frames.length);
+            g.drawImage(uspr.frames[uf] || uspr.frames[0], x * TS, y * TS);
+          }
+          const spr = SPR[SPRITE_OF_TILE[t]];
+          if (spr) {
+            const f = spr.anim ? 0 : (tileHash(x, y) % spr.frames.length);
+            g.drawImage(this._propCutout(spr.frames[f] || spr.frames[0]), x * TS, y * TS);
+          }
+          continue;
+        }
+        const spr = SPR[SPRITE_OF_TILE[t]];
         if (!spr) continue;
         const f = spr.anim ? 0 : (tileHash(x, y) % spr.frames.length);
         g.drawImage(spr.frames[f] || spr.frames[0], x * TS, y * TS);

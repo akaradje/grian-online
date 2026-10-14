@@ -475,7 +475,7 @@ export const GFX3D = {
           wallMats.push(m4.clone());
           m4.compose(pos.set(wx, h + 22.5, wz), quat, scl.set(1, 1, 1));
           roofTopMats.push(m4.clone());
-        } else if (t === T.TREE) {
+        } else if (t === T.TREE && x >= 2 && y >= 2 && x < world.w - 2 && y < world.h - 2) {
           const sc = 0.88 + (tileHash(x, y) % 5) * 0.07;
           m4.compose(pos.set(wx, h + 5.5 * sc, wz), quat, scl.set(sc, sc, sc));
           trunkMats.push(m4.clone());
@@ -483,11 +483,11 @@ export const GFX3D = {
           foliage1Mats.push(m4.clone());
           m4.compose(pos.set(wx, h + 19.5 * sc, wz), quat, scl.set(sc * 0.78, sc * 0.85, sc * 0.78));
           foliage2Mats.push(m4.clone());
-        } else if (t === T.HELLTREE) {
+        } else if (t === T.HELLTREE && x >= 2 && y >= 2 && x < world.w - 2 && y < world.h - 2) {
           const sc = 0.9 + (tileHash(x, y) % 4) * 0.08;
           m4.compose(pos.set(wx, h + 8.0 * sc, wz), quat, scl.set(sc, sc, sc));
           hellTrunkMats.push(m4.clone());
-        } else if (t === T.CYBERTREE) {
+        } else if (t === T.CYBERTREE && x >= 2 && y >= 2 && x < world.w - 2 && y < world.h - 2) {
           m4.compose(pos.set(wx, h + 13.0, wz), quat, scl.set(1, 1, 1));
           cyberRackMats.push(m4.clone());
           m4.compose(pos.set(wx, h + 13.5, wz + 5.7), quat, scl.set(1, 1, 1));
@@ -543,17 +543,17 @@ export const GFX3D = {
 
     // 2) ต้นไม้ 3D (ลำต้นทรงกระบอก + พุ่มใบ 2 ชั้น)
     addInstanced(
-      new THREE.CylinderGeometry(2.0, 2.8, 11, 7),
+      new THREE.CylinderGeometry(2.0, 2.8, 11, 5),
       new THREE.MeshLambertMaterial({ color: 0x5c3d24 }),
       trunkMats
     );
     addInstanced(
-      new THREE.ConeGeometry(8.5, 13, 8),
+      new THREE.ConeGeometry(8.5, 13, 6),
       new THREE.MeshLambertMaterial({ color: 0x2f7d3d }),
       foliage1Mats, true, false
     );
     addInstanced(
-      new THREE.ConeGeometry(7.2, 11, 8),
+      new THREE.ConeGeometry(7.2, 11, 6),
       new THREE.MeshLambertMaterial({ color: 0x429e50 }),
       foliage2Mats
     );
