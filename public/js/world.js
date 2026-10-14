@@ -1,9 +1,10 @@
 /* ═══════════════════════════════════════════════════════════
    world.js — แผนที่โลก การชน กล้อง และมินิแมป
    สร้างแบบ deterministic (seed คงที่) → แผนที่เดิมทุกครั้ง
+   รองรับ 3 แมพ: field (หมู่บ้านโนบอดี้) · hell (ดินแดนมาร) · cyber (แดนเซิร์ฟเถื่อน)
    ═══════════════════════════════════════════════════════════ */
 
-import { CONFIG, ZONE_NAMES, HELL_ZONE_NAMES } from './data.js';
+import { CONFIG, ZONE_NAMES, HELL_ZONE_NAMES, CYBER_ZONE_NAMES } from './data.js';
 import { SPR, tileHash, BLEND, BLEND_LEVEL, BLEND_COLOR, BLEND_DIRS } from './sprites.js';
 
 /* ไทล์พื้น */
@@ -14,6 +15,7 @@ export const T = {
   GRAVE: 17, STATUE: 18, BARREL: 19, LAMP: 20, CHEST: 21, CAVE: 22, WELL: 23,
   PEBBLE: 24, MUSHROOM: 25, BUSH: 26, STUMP: 27, ROOFTOP: 28, WALLWIN: 29,
   ASH: 30, LAVA: 31, HELLTREE: 32, HELLROCK: 33, BONE: 34, PORTAL: 35,
+  CYBERFLOOR: 36, DATASTREAM: 37, CYBERTREE: 38, CYBERROCK: 39, GLITCH: 40,
 };
 
 const SOLID = new Set([
@@ -21,10 +23,11 @@ const SOLID = new Set([
   T.GRAVE, T.STATUE, T.BARREL, T.LAMP, T.CHEST, T.CAVE, T.WELL,
   T.BUSH, T.STUMP, T.ROOFTOP, T.WALLWIN,
   T.HELLTREE, T.HELLROCK,
+  T.DATASTREAM, T.CYBERTREE, T.CYBERROCK,
 ]);
 
-/** ไทล์ที่ทำดาเมจจึงยืนทับ (ลาว) */
-export const HURT_TILES = new Set([T.LAVA]);
+/** ไทล์ที่ทำดาเมจเมื่อยืนทับ (ลาว / บ่อบั๊กไฟดูด) */
+export const HURT_TILES = new Set([T.LAVA, T.GLITCH]);
 
 export const SPRITE_OF_TILE = {
   [T.GRASS]: 't_grass', [T.FLOWER]: 't_flower', [T.DIRT]: 't_dirt', [T.PATH]: 't_path',
@@ -38,6 +41,8 @@ export const SPRITE_OF_TILE = {
   [T.STUMP]: 't_stump', [T.ROOFTOP]: 't_rooftop', [T.WALLWIN]: 't_wallwin',
   [T.ASH]: 't_ash', [T.LAVA]: 't_lava', [T.HELLTREE]: 't_helltree',
   [T.HELLROCK]: 't_hellrock', [T.BONE]: 't_bone', [T.PORTAL]: 't_portal',
+  [T.CYBERFLOOR]: 't_cyberfloor', [T.DATASTREAM]: 't_datastream',
+  [T.CYBERTREE]: 't_cybertree', [T.CYBERROCK]: 't_cyberrock', [T.GLITCH]: 't_glitch',
 };
 
 const MINI_COLOR = {
@@ -52,6 +57,8 @@ const MINI_COLOR = {
   [T.ROOFTOP]: '#a8433a', [T.WALLWIN]: '#7fb6ff',
   [T.ASH]: '#463a4c', [T.LAVA]: '#e05530', [T.HELLTREE]: '#241d28', [T.HELLROCK]: '#4a3a52',
   [T.BONE]: '#d8d2c0', [T.PORTAL]: '#b98bff',
+  [T.CYBERFLOOR]: '#182442', [T.DATASTREAM]: '#2ad4ff', [T.CYBERTREE]: '#2f486d',
+  [T.CYBERROCK]: '#3b4a6b', [T.GLITCH]: '#a832c9',
 };
 
 /* ── RNG แบบ deterministic ── */
@@ -65,7 +72,7 @@ export function mulberry32(a) {
 }
 
 export class World {
-  /** @param {{hell?: boolean}} [opts] hell = true → สร้างดินแดนมารแทนพืดหญ้า */
+  /** @param {{hell?: boolean, cyber?: boolean, mapId?: string}} [opts] */
   constructor(opts = {}) {
     this.w = CONFIG.MAP_W;
     this.h = CONFIG.MAP_H;
@@ -78,18 +85,18 @@ export class World {
     this.bossSpot = { x: 0, y: 0 };
     this.graveCenter = { x: 0, y: 0 };
     this.caveSpot = { x: 0, y: 0 };
-    this.hell = !!opts.hell;
-    this.zoneLabel = this.hell ? 'ดินแดนมาร' : 'หมู่บ้านโนบอดี้';
-    this.rng = mulberry32(this.hell ? CONFIG.HELL_SEED : CONFIG.SEED);
+    this.cyber = !!(opts.cyber || opts.mapId === 'cyber');
+    this.hell = !this.cyber && !!(opts.hell || opts.mapId === 'hell');
+    this.mapId = this.cyber ? 'cyber' : (this.hell ? 'hell' : 'field');
+    this.zoneLabel = this.cyber ? 'แดนเซิร์ฟเถื่อน' : (this.hell ? 'ดินแดนมาร' : 'หมู่บ้านโนบอดี้');
+    const seed = this.cyber ? CONFIG.CYBER_SEED : (this.hell ? CONFIG.HELL_SEED : CONFIG.SEED);
+    this.rng = mulberry32(seed);
     this.generate();
     this.bakeGround();
     this.buildMinimap();
   }
 
-  /* ═══════════ อบพื้นทั้งแผนที่เป็นแคนวาสเดียว ═══════════
-     เหตุผลด้านประสิทธิภาพ: การผสมขอบต้องเรียก drawImage เพิ่มหลายพันครั้งต่อเฟรม
-     วัดแล้วทำให้ FPS ตกจาก 128 → 46 การอบครั้งเดียวแล้วบลิตทีละเฟรมแก้ปัญหานี้
-     ส่วนไทล์ที่มีอนิเมชัน (น้ำ) จะถูกวาดทับทีละเฟรมจากรายการที่เตรียมไว้ */
+  /* ═══════════ อบพื้นทั้งแผนที่เป็นแคนวาสเดียว ═══════════ */
   bakeGround() {
     const TS = CONFIG.TILE;
     const c = document.createElement('canvas');
@@ -98,7 +105,6 @@ export class World {
     const g = c.getContext('2d');
     g.imageSmoothingEnabled = false;
 
-    // ชั้นที่ 1 — ไทล์พื้น (อนิเมชันใช้เฟรม 0 ไว้ก่อน)
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
         const spr = SPR[SPRITE_OF_TILE[this.get(x, y)]];
@@ -108,7 +114,6 @@ export class World {
       }
     }
 
-    // ชั้นที่ 2 — ผสมขอบกับไทล์ข้างเคียงที่อยู่ชั้นสูงกว่า
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
         const lv = BLEND_LEVEL[this.get(x, y)];
@@ -124,18 +129,17 @@ export class World {
     }
     this.groundCanvas = c;
 
-    // จุดไฟในโลก (ตะเกียง · หน้าต่างบ้าน) — ใช้เป็นแหล่งแสงอุ่นตอนกลางคืน
-    // เก็บแบบอาเรย์แบน [x, y, ความแรง] เพื่อลดภาระ GC
+    // จุดไฟในโลก (ตะเกียง · หน้าต่างบ้าน · ตู้เซิร์ฟเวอร์)
     this.lightSpots = [];
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
         const t = this.get(x, y);
         if (t === T.LAMP) this.lightSpots.push(x * TS + 8, y * TS + 9, 1);
         else if (t === T.WALLWIN) this.lightSpots.push(x * TS + 8, y * TS + 8, 0.55);
+        else if (t === T.CYBERTREE && ((x + y) % 5 === 0)) this.lightSpots.push(x * TS + 8, y * TS + 8, 0.7);
       }
     }
 
-    // รายการไทล์อนิเมชัน (เก็บแบบอาเรย์แบน เพื่อลดภาระ GC)
     this.animatedTiles = [];
     for (let y = 0; y < this.h; y++) {
       for (let x = 0; x < this.w; x++) {
@@ -195,6 +199,7 @@ export class World {
     const r = this.rng;
     const { w, h } = this;
     if (this.hell) { this.generateHell(r); return; }
+    if (this.cyber) { this.generateCyber(r); return; }
 
     // 1. พื้นฐานหญ้า + ดอกไม้
     for (let y = 0; y < h; y++) {
@@ -223,7 +228,7 @@ export class World {
       for (let d = 0; d < width; d++) this.set(riverX + off + d, y, T.WATER);
     }
 
-    // 5. ปรับชายฝั่งเป็น 3 ชั้น: น้ำ → น้ำตื้น → ทราย (ดูเป็นธรรมชาติกว่าเดิมมาก)
+    // 5. ปรับชายฝั่งเป็น 3 ชั้น: น้ำ → น้ำตื้น → ทราย
     this.ringAround(T.WATER, T.SHALLOW, 1);
     this.ringAround(T.SHALLOW, T.SAND, 1);
 
@@ -236,7 +241,7 @@ export class World {
       );
     }
 
-    // 7. ทุ่งหญ้าสูง 7 แห่ง — ที่มอนชุม (เดินผ่านได้)
+    // 7. ทุ่งหญ้าสูง 7 แห่ง
     for (let i = 0; i < 7; i++) {
       this.blob(
         5 + Math.floor(r() * (w - 10)),
@@ -269,10 +274,10 @@ export class World {
     this.bossSpot = { x: bx * CONFIG.TILE, y: by * CONFIG.TILE };
     this.buildBridge(riverX, by);
 
-    // 13. หีบสมบัติ 7 จุด ในที่ที่ต้องออกไปหาจริง ๆ
+    // 13. หีบสมบัติ 7 จุด
     this.placeChests();
 
-    // 14. ของประดับเล็ก ๆ กระจายบนหญ้า — ทำให้โลกไม่โล่งและไม่ซ้ำ
+    // 14. ของประดับเล็ก ๆ กระจายบนหญ้า
     for (let i = 0; i < 760; i++) {
       const x = 3 + Math.floor(r() * (w - 6));
       const y = 3 + Math.floor(r() * (h - 6));
@@ -294,17 +299,28 @@ export class World {
     ];
     for (const s of this.signs) this.set(s.x, s.y, T.SIGN);
 
-    // 16. ประตูไปดินแดนมาร์ — เอียงตะวันออกเฉียงใต้ของแมพ (ต้องเดินไปเจอเอง)
+    // 16. ประตูไปดินแดนมาร (portals[0]) และ ประตูไปแดนเซิร์ฟเถื่อน (portals[1])
     const portalX = Math.floor(w * 0.88), portalY = Math.floor(h * 0.40);
     let tries = 0;
     while (this.isSolidTile(this.get(portalX, portalY)) && tries++ < 30) {
       this.set(portalX, portalY, T.DIRT);
     }
     this.set(portalX, portalY, T.PORTAL);
-    this.portals = [{
-      tx: portalX, ty: portalY, x: portalX * CONFIG.TILE, y: portalY * CONFIG.TILE,
-      to: 'hell', spawn: null,
-    }];
+
+    const cyberX = Math.floor(w * 0.48), cyberY = 8;
+    this.clearRect(cyberX - 1, cyberY - 1, 3, 3, T.STONEPATH);
+    this.set(cyberX, cyberY, T.PORTAL);
+
+    this.portals = [
+      {
+        tx: portalX, ty: portalY, x: portalX * CONFIG.TILE, y: portalY * CONFIG.TILE,
+        to: 'hell', spawn: null,
+      },
+      {
+        tx: cyberX, ty: cyberY, x: cyberX * CONFIG.TILE, y: cyberY * CONFIG.TILE,
+        to: 'cyber', spawn: null,
+      },
+    ];
   }
 
   blob(cx, cy, rx, ry, v) {
@@ -317,16 +333,12 @@ export class World {
     }
   }
 
-  /* ═══════════ ดินแดนมาร์ (โซน 2) ═══════════
-     พื้นเถ้าภูเขา + ทะเลสาปลาว + ต้นไม้ตาย
-     seed คงที่ → แมพเดิมทุกครั้ง ตรวจซ้ำได้เหมือนแมพแรก */
+  /* ═══════════ ดินแดนมาร (โซน 2) ═══════════ */
   generateHell(r) {
     const { w, h } = this;
 
-    // 1. พื้นทั้งหมดเป็นเถ้า
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) this.set(x, y, T.ASH);
 
-    // 2. กรอบแผนที่เป็นต้นไม้ตาย
     for (let x = 0; x < w; x++) {
       this.set(x, 0, T.HELLTREE); this.set(x, 1, T.HELLTREE);
       this.set(x, h - 1, T.HELLTREE); this.set(x, h - 2, T.HELLTREE);
@@ -336,37 +348,31 @@ export class World {
       this.set(w - 1, y, T.HELLTREE); this.set(w - 2, y, T.HELLTREE);
     }
 
-    // 3. ทะเลสาปลาว 2 แห่ง (มีอนิเมชัน + โดนดาเมจ)
     this.blob(Math.floor(w * 0.22), Math.floor(h * 0.70), 8, 6, T.LAVA);
     this.blob(Math.floor(w * 0.72), Math.floor(h * 0.26), 7, 5, T.LAVA);
-    // หลงลาวเล็ก ๆ กระเจิง
     for (let i = 0; i < 26; i++) {
       const x = 6 + Math.floor(r() * (w - 12)), y = 6 + Math.floor(r() * (h - 12));
       const t = this.get(x, y);
       if (t === T.ASH || t === T.HELLROCK || t === T.BONE) this.set(x, y, T.LAVA);
     }
 
-    // 4. ป่าตาย 6 กลุ่ม
     for (let i = 0; i < 6; i++) {
       this.blob(6 + Math.floor(r() * (w - 12)), 6 + Math.floor(r() * (h - 12)),
         3 + Math.floor(r() * 4), 3 + Math.floor(r() * 3), T.HELLTREE);
     }
 
-    // 5. หินนรกกระจ่าง
     for (let i = 0; i < 90; i++) {
       const x = 4 + Math.floor(r() * (w - 8)), y = 4 + Math.floor(r() * (h - 8));
       const t = this.get(x, y);
       if (t === T.ASH || t === T.HELLTREE) this.set(x, y, T.HELLROCK);
     }
 
-    // 6. กะโหลกร่างกระจัด
     for (let i = 0; i < 120; i++) {
       const x = 3 + Math.floor(r() * (w - 6)), y = 3 + Math.floor(r() * (h - 6));
       const t = this.get(x, y);
       if (t === T.ASH) this.set(x, y, T.BONE);
     }
 
-    // 7. ลานกลาง + ประตูกลับไปหมู่บ้าน
     const cx = Math.floor(w * 0.5), cy = Math.floor(h * 0.52);
     this.clearRect(cx - 6, cy - 5, 13, 11, T.PATH);
     this.set(cx - 3, cy - 2, T.STATUE);
@@ -378,16 +384,86 @@ export class World {
       to: 'field', spawn: { tx: Math.floor(w * 0.60), ty: Math.floor(h * 0.58) },
     }];
 
-    // 8. หินนรกตกแต่งรอบลาน
     for (const [dx, dy] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) this.set(cx + dx, cy + dy, T.HELLROCK);
 
-    // 9. จุดเกิดผู้เล่น + NPC นักล่า
     this.spawn = { x: (cx + 2) * CONFIG.TILE, y: (cy - 3) * CONFIG.TILE };
     this.npcSpots = [{
       id: 'hunter', x: (cx - 4) * CONFIG.TILE, y: (cy + 1) * CONFIG.TILE,
     }];
     this.village = { x: cx - 8, y: cy - 6, w: 17, h: 12 };
     this.hellCenter = { x: cx * CONFIG.TILE, y: cy * CONFIG.TILE };
+  }
+
+  /* ═══════════ แดนเซิร์ฟเถื่อน (โซน 3 — ใหม่ใน v1.0.0) ═══════════ */
+  generateCyber(r) {
+    const { w, h } = this;
+
+    // 1. พื้นแผงวงจรไซเบอร์ทั้งแมพ
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) this.set(x, y, T.CYBERFLOOR);
+
+    // 2. ขอบแมพเป็นกำแพงตู้เซิร์ฟเวอร์
+    for (let x = 0; x < w; x++) {
+      this.set(x, 0, T.CYBERTREE); this.set(x, 1, T.CYBERTREE);
+      this.set(x, h - 1, T.CYBERTREE); this.set(x, h - 2, T.CYBERTREE);
+    }
+    for (let y = 0; y < h; y++) {
+      this.set(0, y, T.CYBERTREE); this.set(1, y, T.CYBERTREE);
+      this.set(w - 1, y, T.CYBERTREE); this.set(w - 2, y, T.CYBERTREE);
+    }
+
+    // 3. บ่อสายธารดาต้าเรืองแสง 2 แห่ง + บ่อบั๊กไฟดูด
+    this.blob(Math.floor(w * 0.24), Math.floor(h * 0.28), 7, 5, T.DATASTREAM);
+    this.blob(Math.floor(w * 0.76), Math.floor(h * 0.72), 8, 5, T.DATASTREAM);
+    this.blob(Math.floor(w * 0.25), Math.floor(h * 0.74), 6, 4, T.GLITCH);
+    this.blob(Math.floor(w * 0.74), Math.floor(h * 0.25), 6, 4, T.GLITCH);
+
+    for (let i = 0; i < 24; i++) {
+      const x = 6 + Math.floor(r() * (w - 12)), y = 6 + Math.floor(r() * (h - 12));
+      if (this.get(x, y) === T.CYBERFLOOR) this.set(x, y, T.GLITCH);
+    }
+
+    // 4. กลุ่มตู้เซิร์ฟเวอร์และเหมืองการ์ดจอ
+    for (let i = 0; i < 5; i++) {
+      this.blob(6 + Math.floor(r() * (w - 12)), 6 + Math.floor(r() * (h - 12)),
+        3 + Math.floor(r() * 3), 2 + Math.floor(r() * 3), T.CYBERTREE);
+    }
+    for (let i = 0; i < 75; i++) {
+      const x = 4 + Math.floor(r() * (w - 8)), y = 4 + Math.floor(r() * (h - 8));
+      if (this.get(x, y) === T.CYBERFLOOR) this.set(x, y, T.CYBERROCK);
+    }
+
+    // 5. ลานกลางห้องเครื่องแอดมิน + ประตูกลับหมู่บ้าน
+    const cx = Math.floor(w * 0.5), cy = Math.floor(h * 0.50);
+    this.clearRect(cx - 7, cy - 6, 15, 13, T.STONEPATH);
+    this.set(cx, cy - 2, T.STATUE);
+    for (const [dx, dy] of [[-5, -4], [5, -4], [-5, 4], [5, 4]]) this.set(cx + dx, cy + dy, T.LAMP);
+    this.bossSpot = { x: cx * CONFIG.TILE, y: cy * CONFIG.TILE };
+
+    const portalX = cx, portalY = cy + 4;
+    this.set(portalX, portalY, T.PORTAL);
+    const hellPortalX = cx + 5, hellPortalY = cy;
+    this.set(hellPortalX, hellPortalY, T.PORTAL);
+    this.portals = [
+      {
+        tx: portalX, ty: portalY, x: portalX * CONFIG.TILE, y: portalY * CONFIG.TILE,
+        to: 'field', spawn: null,
+      },
+      {
+        tx: hellPortalX, ty: hellPortalY, x: hellPortalX * CONFIG.TILE, y: hellPortalY * CONFIG.TILE,
+        to: 'hell', spawn: null,
+      },
+    ];
+
+    // 6. หีบสมบัติในแดนเซิร์ฟเถื่อน
+    this.placeChests();
+
+    // 7. จุดเกิดผู้เล่น + NPC นักศึกษาฝึกงานแก้บั๊ก
+    this.spawn = { x: (cx - 2) * CONFIG.TILE, y: (cy + 1) * CONFIG.TILE };
+    this.npcSpots = [
+      { id: 'dev_intern', x: (cx - 4) * CONFIG.TILE, y: (cy - 2) * CONFIG.TILE },
+    ];
+    this.village = { x: cx - 8, y: cy - 6, w: 17, h: 13 };
+    this.cyberCenter = { x: cx * CONFIG.TILE, y: cy * CONFIG.TILE };
   }
 
   ringAround(target, fill, depth) {
@@ -414,10 +490,8 @@ export class World {
   }
 
   house(x, y, w = 8, h = 7) {
-    // สันหลังคา + กระเบื้อง
     for (let i = 0; i < w; i++) this.set(x + i, y, T.ROOFTOP);
     for (let j = 1; j <= 2; j++) for (let i = 0; i < w; i++) this.set(x + i, y + j, T.ROOF);
-    // กำแพง (ตรงกลางเป็นพื้นภายใน เดินเข้าไปได้ทางประตู)
     for (let j = 3; j < h; j++) {
       for (let i = 0; i < w; i++) {
         const edge = i === 0 || i === w - 1 || j === h - 1;
@@ -433,14 +507,11 @@ export class World {
   buildVillage(vx, vy) {
     const VW = 26, VH = 19;
     this.clearRect(vx, vy, VW, VH, T.DIRT);
-    // ถนนหินหลัก
     for (let i = 0; i < VW; i++) this.set(vx + i, vy + Math.floor(VH / 2), T.STONEPATH);
     for (let j = 0; j < VH; j++) this.set(vx + Math.floor(VW / 2), vy + j, T.STONEPATH);
-    // ลานกลางหมู่บ้าน + บ่อน้ำ
     this.clearRect(vx + 10, vy + 7, 7, 5, T.STONEPATH);
     this.set(vx + 13, vy + 8, T.WELL);
 
-    // รั้วล้อม (เว้นช่องทางเข้า 4 ช่อง)
     for (let i = 0; i < VW; i++) {
       if ((i > 3 && i < 8) || (i > 15 && i < 20)) continue;
       this.set(vx + i, vy, T.FENCE);
@@ -452,13 +523,11 @@ export class World {
       this.set(vx + VW - 1, vy + j, T.FENCE);
     }
 
-    // บ้าน 4 หลัง
     this.house(vx + 3, vy + 2);
     this.house(vx + 16, vy + 2);
     this.house(vx + 3, vy + 12);
     this.house(vx + 16, vy + 12);
 
-    // ของประดับรอบลานกลาง
     for (const [dx, dy] of [[9, 7], [9, 11], [17, 7], [17, 11]]) this.set(vx + dx, vy + dy, T.BARREL);
     for (const [dx, dy] of [[11, 6], [15, 6], [11, 12], [15, 12]]) this.set(vx + dx, vy + dy, T.LAMP);
     this.set(vx + 12, vy + 3, T.STATUE);
@@ -481,7 +550,6 @@ export class World {
     this.clearRect(gx, gy, GW, GH, T.DIRT);
     for (let i = 0; i < GW; i++) this.set(gx + i, gy + Math.floor(GH / 2), T.STONEPATH);
     for (let j = 0; j < GH; j++) this.set(gx + Math.floor(GW / 2), gy + j, T.STONEPATH);
-    // หลุมศพเรียงเป็นแถว (เว้นบ้างให้ดูไม่เป็นตารางเป๊ะ)
     for (let j = 1; j < GH - 1; j += 2) {
       for (let i = 1; i < GW - 1; i += 2) {
         if (Math.abs(j - Math.floor(GH / 2)) < 1) continue;
@@ -514,7 +582,6 @@ export class World {
         this.set(x, y0 + 1, T.BRIDGE);
       }
     }
-    // ทางเดินดินเชื่อมสะพานทั้งสองฝั่ง
     for (let x = riverX - 15; x <= riverX - 7; x++) {
       if (!this.isSolidTile(this.get(x, y0))) this.set(x, y0, T.PATH);
       if (!this.isSolidTile(this.get(x, y0 + 1))) this.set(x, y0 + 1, T.PATH);
@@ -538,11 +605,11 @@ export class World {
     ];
     for (const [x, y] of spots) {
       let px = x, py = y, tries = 0;
-      while (tries++ < 40 && this.isSolidTile(this.get(px, py))) {
+      while (tries++ < 40 && (this.isSolidTile(this.get(px, py)) || HURT_TILES.has(this.get(px, py)))) {
         px = x + Math.floor(r() * 7) - 3;
         py = y + Math.floor(r() * 7) - 3;
       }
-      if (this.isSolidTile(this.get(px, py))) continue;
+      if (this.isSolidTile(this.get(px, py)) || HURT_TILES.has(this.get(px, py))) continue;
       this.set(px, py, T.CHEST);
       this.chests.push({
         id: 'chest' + this.chests.length,
@@ -554,6 +621,7 @@ export class World {
 
   inVillage(px, py) {
     const v = this.village;
+    if (!v) return false;
     const tx = Math.floor(px / CONFIG.TILE), ty = Math.floor(py / CONFIG.TILE);
     return tx >= v.x - 1 && tx < v.x + v.w + 1 && ty >= v.y - 1 && ty < v.y + v.h + 1;
   }
@@ -570,6 +638,11 @@ export class World {
 
   /** โซนปัจจุบัน — ใช้ทั้งแสดงชื่อและเลือกชนิดมอนที่จะเกิด */
   regionAt(px, py) {
+    if (this.cyber) {
+      if (this.inVillage(px, py)) return 'village';
+      if (Math.hypot(px - this.cyberCenter.x, py - this.cyberCenter.y) < 11 * CONFIG.TILE) return 'cybercore';
+      return 'cyberfield';
+    }
     if (this.hell) {
       if (this.inVillage(px, py)) return 'village';
       if (Math.hypot(px - this.hellCenter.x, py - this.hellCenter.y) < 9 * CONFIG.TILE) return 'hellcore';
@@ -587,9 +660,14 @@ export class World {
 
   zoneNameAt(px, py) {
     const r = this.regionAt(px, py);
+    if (this.cyber) {
+      if (r === 'village') return 'ห้องเครื่องแอดมินหลับ';
+      if (r === 'cybercore') return 'ลานเซิร์ฟเถื่อนคูณร้อย';
+      return CYBER_ZONE_NAMES[(Math.floor(px / (CONFIG.TILE * 24)) + Math.floor(py / (CONFIG.TILE * 18))) % CYBER_ZONE_NAMES.length];
+    }
     if (this.hell) {
       if (r === 'village') return 'ค่ายนักล่าอาคม';
-      if (r === 'hellcore') return 'ดอนผู้นอบอุ่น';
+      if (r === 'hellcore') return 'ดอนไฟนรกอุ่น';
       return HELL_ZONE_NAMES[(Math.floor(px / (CONFIG.TILE * 24)) + Math.floor(py / (CONFIG.TILE * 18))) % HELL_ZONE_NAMES.length];
     }
     if (r === 'village') return 'หมู่บ้านโนบอดี้';
@@ -658,6 +736,12 @@ export class World {
     g.drawImage(this.minimapCanvas, 0, 0, this.w, this.h, 0, 0, cw, ch);
     const sx = cw / (this.w * CONFIG.TILE);
     const sy = ch / (this.h * CONFIG.TILE);
+
+    // ประตูวาร์ปบนมินิแมป
+    g.fillStyle = '#b98bff';
+    for (const pt of this.portals) {
+      g.fillRect(pt.x * sx - 1.5, pt.y * sy - 1.5, 3, 3);
+    }
 
     g.fillStyle = '#ffc94d';
     for (const c of this.chests) {

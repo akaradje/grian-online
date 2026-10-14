@@ -34,6 +34,10 @@ export const ACHIEVEMENTS = [
   { id: 'auto30', icon: '🛌', name: 'นอนหลับให้ AI ตี', desc: 'ใช้โหมด AUTO สะสม 30 นาที', goal: 1800, get: (p) => Math.floor(p.ctr.autoTime || 0) },
   { id: 'autoKill50', icon: '⚙️', name: 'มืออาชีพสายออโต้', desc: 'สังหาร 50 ตัวด้วยโหมด AUTO', goal: 50, get: (p) => p.ctr.autoKills || 0 },
   { id: 'noAuto', icon: '🎮', name: 'เล่นเองจริง ๆ', desc: 'เล่น 10 นาทีโดยไม่เปิด AUTO เลย (หายาก)', goal: 600, get: (p) => Math.floor(p.ctr.manualTime || 0) },
+  { id: 'cyber1', icon: '💻', name: 'นักมุดเซิร์ฟเถื่อน', desc: 'เดินทางไปถึงแดนเซิร์ฟเถื่อน (แมพ 3)', goal: 1, get: (p) => p.ctr.visitedCyber || 0 },
+  { id: 'pvp3', icon: '🥊', name: 'นักเลงคีย์บอร์ด', desc: 'ชนะการประลอง PvP กับบอทเกรียน 3 ครั้ง', goal: 3, get: (p) => p.ctr.pvpWins || 0 },
+  { id: 'tower3', icon: '🗼', name: 'ผู้พิชิตหอคอยบั๊ก', desc: 'ผ่านหอคอยบั๊กถึงชั้นที่ 3', goal: 3, get: (p) => p.ctr.towerFloor || 0 },
+  { id: 'charm1', icon: '🧿', name: 'พึ่งสิ่งศักดิ์สิทธิ์', desc: 'หลอมหรือใช้ยันต์กันแตกสำเร็จ 1 ครั้ง', goal: 1, get: (p) => (p.ctr.charmSaved || 0) + (p.ctr.charmCrafted || 0) },
 ];
 
 /** ตรวจความสำเร็จใหม่ → คืนรายการที่เพิ่งปลดล็อก */

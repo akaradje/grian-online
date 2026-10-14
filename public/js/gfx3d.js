@@ -1,13 +1,10 @@
 /* ═══════════════════════════════════════════════════════════
    gfx3d.js — โลก 3D จริงด้วย three.js (WebGL2)
-   ── ตามหลักฟิ สิ + มุมมอง ──
-   · heightmap: พื้นยก/ทุ่นiefdาตามชนิดไทล์ (น้ำต่ำ ต้นไม้/บ้านสูง)
-   · สิ่งกีดขวาง = instanced billboard หมุนเข้าหากล้อง → มีมิติ/paralłắax
-   · เอนทิตี (ผู้เล่น/มอน/NPC/สัตว์เลี้ยง/บอท/ของ) = billboard + frame
-   · แสง: ดวงอาทิตย์หมุนเงาตามเวลา + ไฟจุด inverse-square + shadow map
-   · น้ำ/ลาว: specular คลื่น/เรืองแสงใน shader · อากาศ: หมอก/ดาว/ดวงอาทิตย์
-   · particle ใช้ pool เดิม (drag+กระถก) วาดเป็น points 3D
-   ── ยังคงพิกเซลาร์ต: nearest filter
+   ── อัปเกรดใน v1.0.0 ──
+   · แก้บั๊กพิกัดดวงอาทิตย์/ดวงจันทร์ (p.y แทน p.z) ให้เงาและ specular น้ำแม่นยำ
+   · รองรับโซน 3 (แดนเซิร์ฟเถื่อน): สายธารดาต้าเรืองแสง · บ่อบั๊กไฟดูด · แสงไฟไซเบอร์
+   · เพิ่มเอฟเฟกต์สกิล 3D จริงบนพื้นโลก (3D Shockwave Ring & Light Pillar)
+   · รองรับการซูมกล้อง (Mouse Wheel / ตั้งค่าระยะกล้อง) และวงออร่าอาวุธตีบวก
    ═══════════════════════════════════════════════════════════ */
 
 import * as THREE from '../vendor/three.module.min.js';
@@ -15,25 +12,23 @@ import { CONFIG } from './data.js';
 import { SPR } from './sprites.js';
 import { T, SPRITE_OF_TILE } from './world.js';
 import { Settings } from './settings.js';
+import { VFX } from './vfx.js';
 
 const TS = CONFIG.TILE;
 const TILE_H = {
-  0: 0, 1: 0, 14: 0, 24: 0, 25: 0, 34: 0,
+  0: 0, 1: 0, 14: 0, 24: 0, 25: 0, 34: 0, 36: 0,
   5: -1.5, 2: 0, 3: 0, 15: 0.5,
-  13: -2, 4: -3,
-  6: 10, 26: 4, 27: 6, 32: 11,
-  7: 7, 33: 8,
+  13: -2, 4: -3, 37: -2.5,
+  6: 10, 26: 4, 27: 6, 32: 11, 38: 18,
+  7: 7, 33: 8, 39: 9,
   8: 17, 29: 17, 9: 22, 28: 22,
   10: 14, 11: 6, 12: 10, 20: 16,
   17: 3, 18: 13, 19: 8, 21: 3, 22: 8, 23: 10, 35: 6,
-  31: -1.6,
+  31: -1.6, 40: -1.2,
 };
 const hOf = (t) => (TILE_H[t] !== undefined ? TILE_H[t] * 0.18 : 0);
-// ความสูงพื้นถูกสเกลให้เป็นเนินนุ่มมาก — sprite (ต้นไม้/บ้าน) คือตัวแบกมิติ upright
-// เดิมใช้ค่าตรง ๆ 6–22 → พื้นยกเป็น Mesa มีขอบsudden รอบต้นไม้ทุกต้น · วงแหวน elevation
-// ของแผนที่หมู่บ้านอ่านเป็นลอนชัดเกินไปตอน ~0.35 → 0.18 ให้ depth อยู่แต่ไม่บัง
 
-/* ── อุณภาพสี (Kelvin) → RGB ── */
+/* ── อุณหภูมิสี (Kelvin) → RGB ── */
 function kelvinToRGB(k) {
   const t = k / 100;
   let r, g, b;
@@ -45,17 +40,18 @@ function kelvinToRGB(k) {
   return [Math.min(255, Math.max(0, r)) / 255, Math.min(255, Math.max(0, g)) / 255, Math.min(255, Math.max(0, b)) / 255];
 }
 
-const MAX_LIGHTS = 8;        // loop ต่อ fragment — 8 พอสำหรับ pixel world (แสงไกลตัดด้วย distance อยู่แล้ว)
+const MAX_LIGHTS = 8;
 const MAX_PARTICLES = 320;
-const MAX_SHADOWS = 96;      // เงาติดพื้น (instanced — 1 draw call)
-const NO_BILLBOARD = new Set([T.CHEST, T.PORTAL, T.WATER, T.SHALLOW, T.LAVA]);
+const MAX_SHADOWS = 96;
+const MAX_FX3D = 18;
+const NO_BILLBOARD = new Set([T.CHEST, T.PORTAL, T.WATER, T.SHALLOW, T.LAVA, T.DATASTREAM, T.GLITCH]);
 
-/* ── ของที่ใช้ซ้ำทุกเฟรม (ห้าม new ในลูป — GC ทำให้เฟรมกระตุก) ── */
 const _skyNight = new THREE.Color(0x080b18);
 const _skyDay = new THREE.Color(0x8fc3ff);
 const _skyDusk = new THREE.Color(0xd98a52);
+const _skyCyber = new THREE.Color(0x091428);
 const _skyCol = new THREE.Color();
-// ไฟจุด: flat arrays + insertion เรียงตามระยะ (ไม่สร้าง object, ไม่ sort)
+
 const _lsX = new Float64Array(MAX_LIGHTS), _lsY = new Float64Array(MAX_LIGHTS);
 const _lsR = new Float64Array(MAX_LIGHTS), _lsP = new Float64Array(MAX_LIGHTS);
 const _lsCol = new Uint32Array(MAX_LIGHTS), _lsD = new Float64Array(MAX_LIGHTS);
@@ -63,6 +59,13 @@ const _lsCol = new Uint32Array(MAX_LIGHTS), _lsD = new Float64Array(MAX_LIGHTS);
 export const GFX3D = {
   ok: false,
   reason: null,
+  zoom: 1.0,       // ซูมกล้อง (0.65 = ใกล้ · 1.0 = ปกติ · 1.4 = มุมกว้าง)
+  elev: 0.62,      // มุมก้มเงยกล้อง (เรเดียน)
+
+  setZoom(delta) {
+    this.zoom = Math.max(0.65, Math.min(1.4, (this.zoom || 1) + delta));
+    return this.zoom;
+  },
 
   /* ═══════════ init ═══════════ */
   init(world) {
@@ -72,28 +75,24 @@ export const GFX3D = {
     try {
       this.renderer = new THREE.WebGLRenderer({
         canvas, antialias: true, alpha: false,
-        // ไม่ต้อง preserveDrawingBuffer — ไม่มีโค้ดอ่านพิกเซลกลับจาก GL (screenshot จับหน้าจอคอมโพสิตเตอร์ได้)
         powerPreference: 'high-performance',
       });
     } catch (e) { this.reason = 'no-webgl'; return false; }
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    // เงา: geometry โลกแทบไม่ขยับ — อัปเดตตามนโยบายใน render() (ไม่ทุeare— shadow pass ถึกสุด)
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.needsUpdate = true;
     this.renderer.setClearColor(0x0a0e1a, 1);
 
     this.scene = new THREE.Scene();
-    this.scene.background = _skyCol;   // mutable — syncSky แก้ค่าในที่ แทน new ทุกเฟรม
-    this.scene.fog = new THREE.Fog(0x0a0e1a, 420, 1200);
+    this.scene.background = _skyCol;
+    this.scene.fog = new THREE.Fog(0x0a0e1a, 420, 1250);
 
-    // กล้อง perspective เอียง 35° — มีมิติ แต่เล่นแนว top-down ได้
     this.camera = new THREE.PerspectiveCamera(50, 16 / 9, 5, 3000);
     this.camera.position.set(0, 300, 300);
     this.camTarget = new THREE.Vector3();
 
-    // ── แสง ──
     this.hemi = new THREE.HemisphereLight(0x99b8ff, 0x1a1410, 0.55);
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xffffff, 1.1);
@@ -108,15 +107,14 @@ export const GFX3D = {
     this.scene.add(this.moon);
     this.scene.add(this.moon.target);
 
+    this.lightPool = [];
     for (let i = 0; i < MAX_LIGHTS; i++) {
       const L = new THREE.PointLight(0xffb45a, 0, 130, 1.7);
       L.visible = false;
       this.scene.add(L);
-      this.lightPool = this.lightPool || [];
       this.lightPool.push(L);
     }
 
-    // ดวงอาทิตย์/ดวงจันทร์ + ดาว
     this.sunDisc = this._disc(0xfff2c0, 70, 0.95);
     this.moonDisc = this._disc(0xdfe8ff, 40, 0.9);
     this.scene.add(this.sunDisc); this.scene.add(this.moonDisc);
@@ -129,18 +127,89 @@ export const GFX3D = {
     this._q = new THREE.Quaternion();
     this._v = new THREE.Vector3();
 
+    this._initFx3DPool();
+    VFX.on3DSpawn = (kind, e) => this.spawn3DFx(kind, e);
+
     this.build(world);
-    // lazy: วัดความเร็ว지șิการโลกแรก (camera/เอนทิตีพร้อม) — boot bench ยังจับไม่สุด
     this._benchPending = Settings.get('render3d') === 'auto';
     this.ok = true;
     return true;
   },
 
-  /** วาด 12 เฟรมวัดเวลา — คืน true ถ้าเร็วพอ (กันเครื่องอ่อน/software renderer) */
+  /** สร้าง Pool ของเอฟเฟกต์สกิล 3D (วงแหวนคลื่นกระแทก + เสาแสง 3D) */
+  _initFx3DPool() {
+    this.fx3dList = [];
+    const ringGeo = new THREE.RingGeometry(0.65, 1.0, 28);
+    ringGeo.rotateX(-Math.PI / 2);
+    const cylGeo = new THREE.CylinderGeometry(0.5, 0.85, 90, 16, 1, true);
+    cylGeo.translate(0, 45, 0);
+
+    for (let i = 0; i < MAX_FX3D; i++) {
+      const isBeam = i >= MAX_FX3D - 4;
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(isBeam ? cylGeo : ringGeo, mat);
+      mesh.visible = false;
+      this.scene.add(mesh);
+      this.fx3dList.push({ mesh, mat, isBeam, active: false, t: 0, dur: 0.5, size: 20, follow: null });
+    }
+  },
+
+  spawn3DFx(kind, e) {
+    if (!this.ok || !this.fx3dList) return;
+    if (!['shockwave', 'explosion', 'beam', 'aura', 'implode'].includes(kind)) return;
+    const wantBeam = kind === 'beam';
+    const slot = this.fx3dList.find((x) => !x.active && x.isBeam === wantBeam)
+      || this.fx3dList.find((x) => x.isBeam === wantBeam);
+    if (!slot) return;
+    slot.active = true;
+    slot.kind = kind;
+    slot.t = 0;
+    slot.dur = e.dur || 0.5;
+    slot.size = e.size || 28;
+    slot.x = e.x || 0;
+    slot.y = e.y || 0;
+    slot.follow = e.follow || null;
+    slot.mat.color.set(e.color || '#ffffff');
+    slot.mesh.visible = true;
+    const h = this.heightAt(slot.x, slot.y);
+    slot.mesh.position.set(slot.x, h + 1.2, slot.y);
+  },
+
+  _updateFx3D(dt) {
+    if (!this.fx3dList) return;
+    for (const f of this.fx3dList) {
+      if (!f.active) continue;
+      f.t += dt;
+      if (f.t >= f.dur) {
+        f.active = false;
+        f.mesh.visible = false;
+        continue;
+      }
+      if (f.follow) { f.x = f.follow.x; f.y = f.follow.y; }
+      const k = f.t / f.dur;
+      const h = this.heightAt(f.x, f.y);
+      f.mesh.position.set(f.x, h + 1.2, f.y);
+      if (f.isBeam) {
+        const w = f.size * (1 - k * 0.4);
+        f.mesh.scale.set(w * 0.6, 1, w * 0.6);
+        f.mat.opacity = (1 - k) * 0.75;
+      } else {
+        const r = f.kind === 'implode'
+          ? f.size * (1 - k * 0.85)
+          : (f.kind === 'aura' ? f.size * (0.85 + 0.15 * Math.sin(f.t * 10)) : f.size * (0.2 + k * 0.95));
+        f.mesh.scale.set(r, 1, r);
+        f.mat.opacity = (1 - k) * 0.85;
+      }
+    }
+  },
+
   _bench() {
     try {
       const gl = this.renderer.getContext();
-      this.renderer.render(this.scene, this.camera);          // warm up (compile shader)
+      this.renderer.render(this.scene, this.camera);
       const t0 = performance.now();
       for (let i = 0; i < 12; i++) this.renderer.render(this.scene, this.camera);
       gl.finish();
@@ -189,7 +258,6 @@ export const GFX3D = {
 
   _tex(canvas, mip = true) {
     const t = new THREE.CanvasTexture(canvas);
-    // พิกเซลlาร์ต: ใกล้ = nearest (คม) · ไกล = mipmap (กัน moiré)
     t.magFilter = THREE.NearestFilter;
     t.minFilter = mip ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter;
     t.generateMipmaps = mip;
@@ -206,8 +274,6 @@ export const GFX3D = {
     for (let y = 0; y < world.h; y++) for (let x = 0; x < world.w; x++) {
       this.groundH[y * world.w + x] = hOf(world.get(x, y));
     }
-    // เบลอบาง 3×3 — เอาลูกบาร์ขั้นบันไดจากการตั้งความสูงต่อไทล์ออก ทำเนินนุ่ม
-    // (ต้นไม้/บ้านยังเป็นก้อนสูง แต่ฐานไม่ได้เป็นเสาเหล็กแล้ว)
     {
       const src = this.groundH, sm = new Float32Array(src.length);
       for (let y = 0; y < world.h; y++) for (let x = 0; x < world.w; x++) {
@@ -222,7 +288,6 @@ export const GFX3D = {
       this.groundH = sm;
     }
 
-    // ── 1) พื้นโลก displaced ──
     this.mapTex = this._tex(world.groundCanvas);
     const tilesData = new Uint8Array(world.w * world.h);
     for (let i = 0; i < tilesData.length; i++) tilesData[i] = world.tiles[i];
@@ -239,7 +304,7 @@ export const GFX3D = {
     geo.computeVertexNormals();
 
     this.terrainMat = new THREE.MeshStandardMaterial({
-      map: this.mapTex, roughness: 0.96, metalness: 0,
+      map: this.mapTex, roughness: 0.94, metalness: 0,
     });
     this.terrainMat.userData.sh = null;
     this.terrainMat.onBeforeCompile = (sh) => {
@@ -249,7 +314,7 @@ export const GFX3D = {
       sh.uniforms.uTime = { value: 0 };
       sh.uniforms.uSunCol = { value: new THREE.Vector3(1, 1, 1) };
       sh.uniforms.uSunI = { value: 1 };
-      sh.uniforms.uSunDir = { value: new THREE.Vector3(0.4, 0.8, 0.4) };   // ทิศแดดจริง (syncSky ใส่ทุกเฟรม)
+      sh.uniforms.uSunDir = { value: new THREE.Vector3(0.4, 0.8, 0.4) };
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', '#include <common>\n' +
           'uniform sampler2D uTiles; uniform vec2 uGrid; uniform vec2 uMapSize;\n' +
@@ -258,28 +323,31 @@ export const GFX3D = {
           'vec2 wpos = vMapUv * uMapSize;\n' +
           'vec2 gv = wpos / uGrid;\n' +
           'float id = texture2D(uTiles, floor(gv) / uGrid + 0.5 / uGrid).r * 255.0;\n' +
-          // ── น้ำ: height field Σคลื่น + normal เชิงเครื่องหมาย (อนุพันธ์จริง) + Fresnel ──
-          'if (abs(id - ' + T.WATER + '.0) < 0.5) {\n' +
+          'if (abs(id - ' + T.WATER + '.0) < 0.5 || abs(id - ' + T.DATASTREAM + '.0) < 0.5) {\n' +
           '  float k1 = 0.11, k2x = 0.05, k2y = 0.09, k3x = -0.04, k3y = 0.16;\n' +
           '  float p1 = wpos.x * k1 + uTime * 1.6;\n' +
           '  float p2 = wpos.x * k2x + wpos.y * k2y - uTime * 1.1;\n' +
           '  float p3 = wpos.y * k3y + wpos.x * k3x + uTime * 2.3;\n' +
           '  vec2 dh = vec2(k1 * cos(p1) + k2x * cos(p2) + k3x * cos(p3),\n' +
-          '                 k2y * cos(p2) + k3y * cos(p3));\n' +      // ∂h/∂x, ∂h/∂y
+          '                 k2y * cos(p2) + k3y * cos(p3));\n' +
           '  vec3 nrm = normalize(vec3(-dh * 0.9, 1.0));\n' +
           '  vec3 V = normalize(vViewPosition);\n' +
           '  vec3 L = normalize(uSunDir);\n' +
-          '  float F = 0.02 + 0.98 * pow(1.0 - max(dot(nrm, V), 0.0), 5.0);\n' +  // Schlick (F0 น้ำ=0.02)
+          '  float F = 0.02 + 0.98 * pow(1.0 - max(dot(nrm, V), 0.0), 5.0);\n' +
           '  float spec = pow(max(dot(reflect(-L, nrm), V), 0.0), 64.0) * F;\n' +
-          '  diffuseColor.rgb += uSunCol * spec * (0.2 + uSunI * 1.6);\n' +
+          '  diffuseColor.rgb += uSunCol * spec * (0.25 + uSunI * 1.6);\n' +
           '}\n' +
-          // ── ลาว: pulse ความร้อน + fresnel เรืองแสงขอบ ──
           'if (abs(id - ' + T.LAVA + '.0) < 0.5) {\n' +
           '  float pulse = 0.5 + 0.5 * sin(wpos.x * 0.2 + wpos.y * 0.13 + uTime * 2.4);\n' +
           '  vec3 V = normalize(vViewPosition);\n' +
           '  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.98, 0.36, 0.10), 0.45 + 0.25 * pulse);\n' +
           '  diffuseColor.rgb *= 1.0 + 0.5 * pulse;\n' +
           '  diffuseColor.rgb += vec3(0.9, 0.25, 0.05) * pow(1.0 - max(dot(vec3(0.0, 1.0, 0.0), V), 0.0), 3.0) * 0.6;\n' +
+          '}\n' +
+          'if (abs(id - ' + T.GLITCH + '.0) < 0.5) {\n' +
+          '  float pulse = 0.5 + 0.5 * sin(wpos.x * 0.35 - wpos.y * 0.25 + uTime * 5.0);\n' +
+          '  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.35, 0.9, 1.0), 0.35 * pulse);\n' +
+          '  diffuseColor.rgb *= 1.0 + 0.45 * pulse;\n' +
           '}');
       this.terrainMat.userData.sh = sh;
     };
@@ -287,7 +355,6 @@ export const GFX3D = {
     this.terrain.receiveShadow = true;
     this.scene.add(this.terrain);
 
-    // ── 2) สิ่งกีดขวาง = instanced billboard (CPU matrix ต่อเฟรม) ──
     this.obstacles = [];
     const groups = new Map();
     for (let y = 0; y < world.h; y++) for (let x = 0; x < world.w; x++) {
@@ -296,13 +363,10 @@ export const GFX3D = {
       const sid = SPRITE_OF_TILE[t];
       if (!sid || !SPR[sid]) continue;
       const g = groups.get(sid) || { sid, sp: SPR[sid], items: [] };
-      // เบสต้น = ความสูงพื้นที่เรียบ (ground เบลอบางแล้ว — ไม่ใช้ hOf ตรง ๆ)
       g.items.push({ x: x * TS + TS / 2, z: y * TS + TS / 2, h: this.sampleH(x * TS + TS / 2, y * TS + TS / 2) });
       groups.set(sid, g);
     }
     for (const g of groups.values()) {
-      // Basic + uniform คูณค่ากลางคืน (1 multiply/fragment): ต้นไม้มืดตามโลก
-      // โดยไม่ต้องรัน light loop 8 ตัว/fragment แบบ Lambert (ต้นไม้เป็นผิวมากสุด)
       const mat = new THREE.MeshBasicMaterial({
         map: this._tex(g.sp.frames[0]), transparent: true, alphaTest: 0.5, side: THREE.FrontSide,
       });
@@ -326,7 +390,6 @@ export const GFX3D = {
       this.obstacles.push({ g, mesh, mat });
     }
 
-    // ── 3) หีบ + Portal (มีสถานะ/อนิโมชั่น) ──
     this.chestMeshes = (world.chests || []).map((c) => {
       const sp = SPR['t_chest'];
       const m = new THREE.Mesh(new THREE.PlaneGeometry(sp.w, sp.h), new THREE.MeshLambertMaterial({
@@ -347,13 +410,10 @@ export const GFX3D = {
       return m;
     });
 
-    // ── 4) เอนทิตี pool ──
     this.entityPool = {};
     this.frameCache = {};
-    this._poolKeys = [];      // คีย์ pool — เติมเมื่อมี sprite ใหม่ (กัน Object.keys ทุกเฟรม)
+    this._poolKeys = [];
 
-    // ── 4b) เงาติดพื้น (blob shadow) — horizontal quad gradient · instanced 1 draw call ──
-    // ติดพื้นทำให้ตัวละครไม่ลอยค้าง (shadow map จริงมีแค่สำหรับ obstacle)
     this.shadowMesh = new THREE.InstancedMesh(
       new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({
@@ -363,11 +423,10 @@ export const GFX3D = {
       MAX_SHADOWS,
     );
     this.shadowMesh.frustumCulled = false;
-    this.shadowMesh.renderOrder = -1;        // วาดก่อน sprite — เท้าสไปทับเงา
+    this.shadowMesh.renderOrder = -1;
     this.shadowMesh.count = 0;
     this.scene.add(this.shadowMesh);
 
-    // ── 5) particle ──
     this.pPos = new Float32Array(MAX_PARTICLES * 3);
     this.pCol = new Float32Array(MAX_PARTICLES * 3);
     const pgeo = new THREE.BufferGeometry();
@@ -435,11 +494,11 @@ export const GFX3D = {
     );
     this.ray.setFromCamera(ndc, this.camera);
     const hit = new THREE.Vector3();
-    this.pickPlane.constant = -this._pickY;
+    this.pickPlane.constant = -(this._pickY || 0);
     return this.ray.ray.intersectPlane(this.pickPlane, hit) ? { x: hit.x, y: hit.z } : null;
   },
 
-  /** world → CSS px (สำหรับ DOM overlay และ 2D effects) */
+  /** world → CSS px (สำหรับ DOM overlay) */
   project(wx, wy, headUp = 0) {
     if (!this.ok) return { sx: 0, sy: 0, depth: 1 };
     this._v.set(wx, this.heightAt(wx, wy) + headUp, wy);
@@ -451,7 +510,6 @@ export const GFX3D = {
     };
   },
 
-  /** ความสูงพื้นแบบ bilinear (ไม่มีขั้นบันได — ใช้กับตัวละคร/billboard ทั้งหมด) */
   sampleH(wx, wy) {
     const w = this.world;
     if (!w || !this.groundH) return 0;
@@ -470,17 +528,15 @@ export const GFX3D = {
   },
 
   _getEntity(sprId) {
-    const sp = SPR[sprId];
+    const sp = SPR[sprId] || SPR['dummy'];
     if (!sp) return null;
     let pool = this.entityPool[sprId];
     if (!pool) {
       pool = this.entityPool[sprId] = { sp, used: [], free: [] };
-      this._poolKeys.push(sprId);          // sprite ใหม่ — เพิ่มคีย์ครั้งเดียว
+      this._poolKeys.push(sprId);
     }
     let mesh = pool.free.pop();
     if (!mesh) {
-      // Lambert + emissiveMap เบา (0.25): ตอบสนองแสงจริง กลางคืนมืดตามโลก
-      // แต่ไม่มืดจนอ่านไม่ออก (sprite พิกเซลต้องเห็นชัดเสมอ)
       const mat = new THREE.MeshLambertMaterial({
         map: this._tex(sp.frames[0]), emissiveMap: this._tex(sp.frames[0]),
         emissive: 0xffffff, emissiveIntensity: 0.25,
@@ -496,7 +552,7 @@ export const GFX3D = {
   },
 
   _frameTex(sprId, frame) {
-    const sp = SPR[sprId];
+    const sp = SPR[sprId] || SPR['dummy'];
     if (!sp) return null;
     const key = sprId + ':' + frame;
     if (!this.frameCache[key]) {
@@ -512,25 +568,22 @@ export const GFX3D = {
       for (const m of pool.used) pool.free.push(m);
       pool.used.length = 0;
     }
-    const cx = this.camera.position.x, cy = this.camera.position.y, cz = this.camera.position.z;
     let shN = 0;
     for (const ent of list) {
       const mesh = this._getEntity(ent.sprId);
       if (!mesh) continue;
-      const sp = SPR[ent.sprId];
+      const sp = SPR[ent.sprId] || SPR['dummy'];
       const h = this.heightAt(ent.x, ent.y);
-      mesh.position.set(ent.x, h + ent.headUp + sp.h * 0.5 - 6, ent.y);
+      mesh.position.set(ent.x, h + (ent.headUp || 0) + sp.h * 0.5 - 6, ent.y);
       mesh.quaternion.copy(camQ);
       mesh.scale.x = ent.flip ? -1 : 1;
       if (mesh.userData.frame !== ent.frame) {
-        // สลับ texture เท่ากับ frame ใหม่ (uniform อ่านทุกเฟรม — ไม่ต้อง needsUpdate)
         const tex = this._frameTex(ent.sprId, ent.frame);
         mesh.material.map = tex;
         mesh.material.emissiveMap = tex;
         mesh.userData.frame = ent.frame;
       }
       mesh.visible = true;
-      // เงาติดพื้น: กว้าง ~62% ของ sprite · บอส/ใหญ่ ×1.5 · ติดพื้น +0.6 (กัน z-fight)
       if (this.shadowMesh && shN < MAX_SHADOWS) {
         const d = (ent.shadowR || Math.max(9, sp.w * 0.62));
         this._m4.compose(this._v.set(ent.x, h + 0.6, ent.y), this._qi, this._v2.set(d, d, 1));
@@ -547,10 +600,8 @@ export const GFX3D = {
     }
   },
 
-  /** อัปเดต obstacle instances (billboard เข้ากล้อง เฉพาะที่ในจอ) */
-  _syncObstacles(state) {
-    const cx = this.camera.position.x, cy = this.camera.position.y, cz = this.camera.position.z;
-    // บิลบอร์ดกระทบทุกมุม — ถ้ากล้องกับจุดโฟกัสไม่ขยับก็ไม่ต้องคิดใหม่
+  _syncObstacles() {
+    const cx = this.camera.position.x, cz = this.camera.position.z;
     if (cx !== this._obCX || cz !== this._obCZ || this._focusX !== this._obFX || this._focusZ !== this._obFZ) {
       this._obCX = cx; this._obCZ = cz; this._obFX = this._focusX; this._obFZ = this._focusZ;
       for (const o of this.obstacles) {
@@ -558,8 +609,7 @@ export const GFX3D = {
         let n = 0;
         for (let i = 0; i < items.length && n < items.length; i++) {
           const it = items[i];
-          // cull ขอบจอ (ประมาณตามระยะจากจุดโฟกัส)
-          if (Math.abs(it.x - this._focusX) > 620 || Math.abs(it.z - this._focusZ) > 480) continue;
+          if (Math.abs(it.x - this._focusX) > 680 || Math.abs(it.z - this._focusZ) > 520) continue;
           const yaw = Math.atan2(cx - it.x, cz - it.z);
           this._q.setFromAxisAngle(this._upAxis, yaw);
           this._m4.compose(
@@ -576,82 +626,78 @@ export const GFX3D = {
         if (!(m.userData.chest && m.userData.chest.opened)) m.quaternion.copy(this.camera.quaternion);
       }
     }
-    // หีบเปิดแล้ว → ซ่อน (ตรวจทุกเฟรม — loop สั้น แม่นกว่าแทนค่าค้าง)
     for (const m of this.chestMeshes) m.visible = !(m.userData.chest && m.userData.chest.opened);
     for (const m of this.portalMeshes) m.quaternion.copy(this.camera.quaternion);
   },
 
   _upAxis: new THREE.Vector3(0, 1, 0),
   _one: new THREE.Vector3(1, 1, 1),
-  _qi: new THREE.Quaternion(),      // identity — เงาติดพื้น (geometry หมุนแนวนอนไว้แล้ว)
+  _qi: new THREE.Quaternion(),
   _v2: new THREE.Vector3(1, 1, 1),
 
-  /** เงา/แสง/ฟากฟ้า + ไฟจุด ตามเฟสวัน */
-  syncSky(state, dt) {
+  /** เงา/แสง/ฟากฟ้า + ไฟจุด ตามเฟสวันและโซน */
+  syncSky(state) {
     if (!this.ok) return;
     const dark = state._dnDark || 0;
     const t = state.time;
     const p = state.player;
+    const world = state.world;
+    const pz = p.y; // แก้บั๊กเดิมที่ใช้ p.z (undefined -> NaN)
 
-    // sun: elevation/azimuth จากเวลา
     const dayT = (t % 300) / 300;
     const elev = Math.max(0, Math.sin((dayT - 0.25) * Math.PI * 2));
     const az = (dayT - 0.25) * Math.PI * 2;
     const SX = Math.cos(az) * 420, SZ = Math.sin(az) * 420;
     const SY = Math.max(80, elev * 430);
-    this.sun.position.set(p.x + SX, SY, p.z + SZ);
-    this.sun.target.position.set(p.x, 0, p.z);
-    const [kr, kg, kb] = kelvinToRGB(dark > 0.15 ? 2300 : 6500);
+    this.sun.position.set(p.x + SX, SY, pz + SZ);
+    this.sun.target.position.set(p.x, 0, pz);
+    const [kr, kg, kb] = world.cyber ? [0.65, 0.88, 1.0] : kelvinToRGB(dark > 0.15 ? 2300 : 6500);
     this.sun.color.setRGB(Math.min(1, kr * 1.05), Math.min(1, kg * 1.05), Math.min(1, kb * 1.05));
-    this.sun.intensity = Math.max(0, 1.15 - dark * 1.35);
+    this.sun.intensity = world.cyber ? 0.85 : Math.max(0, 1.15 - dark * 1.35);
     this.sun.castShadow = this.sun.intensity > 0.3;
-    this.hemi.intensity = 0.42 + (1 - dark) * 0.42;
+    this.hemi.intensity = world.cyber ? 0.65 : (0.42 + (1 - dark) * 0.42);
     this.hemi.color.setRGB(0.62 + (1 - dark) * 0.3, 0.72 + (1 - dark) * 0.26, 1);
-    this.moon.position.set(p.x - SX * 0.5, 340, p.z - SZ * 0.5);
-    this.moon.target.position.set(p.x, 0, p.z);
+    this.moon.position.set(p.x - SX * 0.5, 340, pz - SZ * 0.5);
+    this.moon.target.position.set(p.x, 0, pz);
     this.moon.intensity = dark * 0.3;
 
-    // ฟากฟ้า/หมอก/ดาว
     const dusk = Math.max(0, 1 - Math.abs(dark - 0.55) * 4);
-    _skyCol.copy(_skyNight).lerp(_skyDay, 1 - dark).lerp(_skyDusk, dusk * 0.5);
+    if (world.cyber) {
+      _skyCol.copy(_skyCyber);
+    } else {
+      _skyCol.copy(_skyNight).lerp(_skyDay, 1 - dark).lerp(_skyDusk, dusk * 0.5);
+    }
     this.scene.fog.color.copy(_skyCol);
-    this.stars.material.opacity = Math.max(0, dark - 0.22) * 1.5;
+    this.stars.material.opacity = world.cyber ? 0.85 : Math.max(0, dark - 0.22) * 1.5;
 
-    this.sunDisc.position.set(p.x + SX * 2.2, SY * 1.9 + 120, p.z + SZ * 2.2);
-    this.sunDisc.material.opacity = Math.max(0, 1 - dark * 1.5);
+    this.sunDisc.position.set(p.x + SX * 2.2, SY * 1.9 + 120, pz + SZ * 2.2);
+    this.sunDisc.material.opacity = world.cyber ? 0.2 : Math.max(0, 1 - dark * 1.5);
     this.sunDisc.quaternion.copy(this.camera.quaternion);
-    this.moonDisc.position.set(p.x - SX * 2.2, 330, p.z - SZ * 2.2);
-    this.moonDisc.material.opacity = Math.max(0, dark - 0.3);
+    this.moonDisc.position.set(p.x - SX * 2.2, 330, pz - SZ * 2.2);
+    this.moonDisc.material.opacity = world.cyber ? 0.8 : Math.max(0, dark - 0.3);
     this.moonDisc.quaternion.copy(this.camera.quaternion);
 
-    // uniform น้ำ/ลาว
     const sh = this.terrainMat.userData.sh;
     if (sh) {
       sh.uniforms.uTime.value = this._t;
       sh.uniforms.uSunCol.value.set(kr, kg, kb);
-      sh.uniforms.uSunI.value = Math.max(0, 1 - dark * 1.4);
-      // ทิศแดดจริง — จากตำแหน่งดวงอาทิตย์ไปยังเป้าหมาย (ยังไม่ normalize จนถึงใน shader)
+      sh.uniforms.uSunI.value = world.cyber ? 0.9 : Math.max(0, 1 - dark * 1.4);
       sh.uniforms.uSunDir.value
         .copy(this.sun.position)
         .sub(this.sun.target.position);
     }
 
-    // ต้นไม้/สิ่งกีดขวาง (Basic): คูณความมืดกลางคืนให้เข้ากับโลก (1 multiply/fragment)
-    // กลางวัน 1.0 · กลางคืน ~0.30 — sprite ไม่ตัดสีกับพื้นอีก
-    const nightMul = 0.30 + 0.70 * (1 - dark);
+    const nightMul = world.cyber ? 0.85 : (0.30 + 0.70 * (1 - dark));
     for (const o of this.obstacles) {
       const osh = o.mat.userData.sh;
       if (osh) osh.uniforms.uNight.value = nightMul;
     }
 
-    // ไฟจุด — three r160 = physically-correct: intensity เป็น candy (cd)
-    // E = I/d² → อยากได้สว่าง power ที่ระยะ r ต้องใช้ I = power·r² (r คือรัศมีอ้างอิง)
-    // เดิมใช้ 0.45–1.0 แปลว่ามืดจนเกือบมองไม่เห็น — นี่คือค่าที่แก้เป็นฟิสิกส์จริง
     let ln = 0;
     const push = (x, y, r, power, col) => {
       const d = (x - p.x) ** 2 + (y - p.y) ** 2;
       if (d > 620 * 620) return;
-      if (ln === MAX_LIGHTS && d >= _lsD[MAX_LIGHTS - 1]) return;   // ไกลกว่าเท่าที่มี — ทิ้ง
+      if (ln === MAX_LIGHTS && d >= _lsD[MAX_LIGHTS - 1]) return;
       let i = Math.min(ln, MAX_LIGHTS - 1);
       while (i > 0 && _lsD[i - 1] > d) {
         _lsX[i] = _lsX[i - 1]; _lsY[i] = _lsY[i - 1]; _lsR[i] = _lsR[i - 1];
@@ -660,23 +706,28 @@ export const GFX3D = {
       if (ln < MAX_LIGHTS) ln++;
       _lsX[i] = x; _lsY[i] = y; _lsR[i] = r; _lsP[i] = power; _lsCol[i] = col; _lsD[i] = d;
     };
-    const world = state.world;
     for (let i = 0; i < world.lightSpots.length; i += 3) {
       const strong = world.lightSpots[i + 2] === 1;
-      push(world.lightSpots[i], world.lightSpots[i + 1], strong ? 46 : 26, strong ? 1 : 0.55, 0xffb45a);
+      const col = world.cyber ? 0x4ae8ff : 0xffb45a;
+      push(world.lightSpots[i], world.lightSpots[i + 1], strong ? 46 : 30, strong ? 1 : 0.6, col);
     }
     if (world.hell) {
       for (let yy = 2; yy < world.h; yy += 8) for (let xx = 2; xx < world.w; xx += 8) {
         if (world.get(xx, yy) === T.LAVA) push(xx * 16 + 8, yy * 16 + 8, 60, 0.85, 0xff6a22);
       }
+    } else if (world.cyber) {
+      for (let yy = 2; yy < world.h; yy += 8) for (let xx = 2; xx < world.w; xx += 8) {
+        const tl = world.get(xx, yy);
+        if (tl === T.DATASTREAM) push(xx * 16 + 8, yy * 16 + 8, 56, 0.8, 0x2ad4ff);
+        else if (tl === T.GLITCH) push(xx * 16 + 8, yy * 16 + 8, 52, 0.85, 0xd05cff);
+      }
     }
-    push(p.x, p.y - 4, 34, 0.45, 0xffd9a0);
+    push(p.x, p.y - 4, 34, 0.45, world.cyber ? 0x9fe8ff : 0xffd9a0);
     for (let i = 0; i < ln; i++) {
       const L = this.lightPool[i];
       L.visible = true;
       L.position.set(_lsX[i], this.heightAt(_lsX[i], _lsY[i]) + 16, _lsY[i]);
       L.distance = _lsR[i] * 2.4;
-      // candela: ilight luminance ที่ระยะอ้างอิง r เหมือนกับ power (ตาม falloff 1/d²)
       L.intensity = _lsP[i] * _lsR[i] * _lsR[i] * (0.85 + 0.15 * Math.sin(t * 7.3 + i * 1.7) * Math.sin(t * 12.1 + i));
       L.color.setHex(_lsCol[i]);
     }
@@ -694,9 +745,9 @@ export const GFX3D = {
     const p = state.player;
     this._t += dt;
 
-    // กล้อง: spring ตามผู้เล่น + มองลัวprintstream
+    // กล้อง: spring ตามผู้เล่น + รองรับระยะซูม (zoom)
     const fx = p.x + p.dir * 26, fz = p.y + 12;
-    const D = 320, ELEV = 0.62;
+    const D = 320 * (this.zoom || 1), ELEV = this.elev || 0.62;
     this.camera.position.lerp(this._v.set(fx, D * Math.sin(ELEV), fz + D * Math.cos(ELEV)), Math.min(1, dt * 7));
     this.camTarget.lerp(this._v.set(fx, 0, fz), Math.min(1, dt * 7));
     this.camera.lookAt(this.camTarget);
@@ -706,11 +757,10 @@ export const GFX3D = {
     this.syncSky(state, dt);
     this.syncEntities(list || []);
     this._syncObstacles(state);
+    this._updateFx3D(dt);
 
-    // flash
     this.flash = Math.max(0, (this.flash || 0) - dt * 2.4);
 
-    // particle
     let cnt = 0;
     const pool = state._gfxParticles;
     if (pool) {
@@ -733,8 +783,6 @@ export const GFX3D = {
     this.points.geometry.attributes.color.needsUpdate = true;
     this.points.visible = cnt > 0;
 
-    // ── เงา: geometry แทบไม่ขยับ (โลก/บิลบอร์ดคงที่) — อัปเดตเฉพาะผู้เล่นขยับ
-    // หรือแดดหมุนนาฬิกา毁 (~0.35s) แทนที่จะทุกเฟรม (autoUpdate=false ตั้งไว้ init)
     const shDx = p.x - (this._shX ?? -1e9), shDy = p.y - (this._shY ?? -1e9);
     if (shDx * shDx + shDy * shDy > 100 || Math.abs(state.time - (this._shT ?? -99)) > 0.35) {
       this.renderer.shadowMap.needsUpdate = true;
@@ -745,5 +793,4 @@ export const GFX3D = {
   },
 };
 
-// ตัวช่วยสำหรับ portal frame ตอน build (ยังไม่มี state)
 function state_time() { return performance.now() / 1000; }

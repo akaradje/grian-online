@@ -12,6 +12,7 @@ export const VFX = {
   list: [],
   flashes: [],          // แฟลชเต็มจอ (วาดทับทุกอย่าง)
   shakeHint: 0,
+  on3DSpawn: null,      // hook ส่งต่อให้ GFX3D วาดวงคลื่น/เสาแสง 3D บนพื้นจริง
 
   spawn(kind, o = {}) {
     if (this.list.length >= MAX_VFX) this.list.shift();
@@ -31,9 +32,6 @@ export const VFX = {
       arc: o.arc === undefined ? 18 : o.arc,
       z: 0, vz: 0, vx: 0, vy: 0, g: 0, ph: false,
     };
-    // ── ฟิสิกส์: ลูกไฟ/กระสุนบิน = การเคลื่อนที่แบบ ballistic (g คงที่) ──
-    // จากระยะ + เวลาบินคำนวณ vx,vy,vz ให้ลงจุดเป้าหมายตรงเวลา T พร้อม apex = arc
-    //   z(T) = dz  ⇒  vz = dz/T + ½gT · apex = ½gT² = arc  ⇒  g = 8·arc/T²
     if (kind === 'projectile' && o.from && o.to && e.dur > 0) {
       const T = e.dur, dz = (o.to.y - o.from.y) || 0;
       e.g = (8 * e.arc) / (T * T);
@@ -41,9 +39,12 @@ export const VFX = {
       e.vx = ((o.to.x - o.from.x) || 0) / T;
       e.vy = dz / T;
       e.x = o.from.x; e.y = o.from.y;
-      e.ph = true;               // physics-driven
+      e.ph = true;
     }
     this.list.push(e);
+    if (this.on3DSpawn) {
+      try { this.on3DSpawn(kind, e); } catch (err) { /* ignore */ }
+    }
     return e;
   },
 
@@ -59,18 +60,16 @@ export const VFX = {
       if (e.follow) { e.x = e.follow.x; e.y = e.follow.y; }
 
       if (e.ph) {
-        // ── ballistic: ความเร่งโน้มถ่วงคงที่ (semi-implicit Euler เฟรมคงที่ 60Hz) ──
         e.z += e.vz * dt;
         e.vz -= e.g * dt;
-        if (e.z <= 0 && e.vz < 0) {          // กระแทกพื้น: เด้งตาม restitution + สูญเสียพลังงาน
+        if (e.z <= 0 && e.vz < 0) {
           e.z = 0;
           e.vz = -e.vz * 0.42;
           e.vx *= 0.72; e.vy *= 0.72;
-          if (Math.abs(e.vz) < 26) { e.vz = 0; e.dead = true; }   // หยุดเด้ง — เลือนทิ้ง
+          if (Math.abs(e.vz) < 26) { e.vz = 0; e.dead = true; }
         }
         e.x += e.vx * dt;
         e.y += e.vy * dt;
-        // ทิ้งหางไว้ข้างหลัง (ความหนาแน่นตามอัตรารอบตัว — เร็ว=ห่าง)
         if (Math.random() < 0.8) {
           Particles.spawn('spark', e.x, e.y, { count: 1, c: e.color });
         }
@@ -85,22 +84,23 @@ export const VFX = {
     compact(this.flashes, (f) => { f.t += dt; return f.t < f.dur; });
   },
 
-  /** วาดในพิกัดโลก (หลังตัวละคร เพื่อให้เอฟเฟกต์อยู่หน้าสุด) */
+  /** วาดในพิกัดแคนวาสโลก (รองรับทั้งโหมด 2D และโปรเจกชัน 3D) */
   draw(g, cx, cy, proj) {
     const l = this.list;
     for (let i = 0; i < l.length; i++) {
       const e = l[i];
       const k = Math.min(1, e.t / e.dur);
-      // proj: world→CSS (โหมด 3D) — มิฉะนั้น map แบบ 2D ตรง ๆ
-      // e.z = ความสูงจริงของลูกไฟ (ballistic) → โปรเจกต์ให้สูงขึ้นจากพื้นตามฟิสิกส์
-      const P = proj ? proj(e.x, e.y, e.z || 0) : { x: e.x - cx, y: e.y - cy - (e.z || 0) };
-      const X = Math.round(P.x), Y = Math.round(P.y);
-      const X2 = e.x2 !== undefined ? Math.round((proj ? proj(e.x2, e.y2, 0) : { x: e.x2 - cx }).x) : X;
-      const Y2 = e.y2 !== undefined ? Math.round((proj ? proj(e.x2, e.y2, 0) : { y: e.y2 - cy }).y) : Y;
+      const P = proj ? proj(e.x, e.y, e.z || 0) : { sx: e.x - cx, sy: e.y - cy - (e.z || 0) };
+      const X = Math.round(P.sx ?? P.x ?? 0);
+      const Y = Math.round(P.sy ?? P.y ?? 0);
+      const P2 = e.x2 !== undefined
+        ? (proj ? proj(e.x2, e.y2, 0) : { sx: e.x2 - cx, sy: e.y2 - cy })
+        : P;
+      const X2 = Math.round(P2.sx ?? P2.x ?? X);
+      const Y2 = Math.round(P2.sy ?? P2.y ?? Y);
       g.save();
 
       switch (e.kind) {
-        /* ── รอยฟันโค้ง ── */
         case 'arc': {
           const r = e.size * (0.5 + k * 0.9);
           g.globalAlpha = (1 - k) * 0.95;
@@ -118,7 +118,6 @@ export const VFX = {
           break;
         }
 
-        /* ── ลูกไฟ/กระสุนบิน ── */
         case 'projectile': {
           const r = 3.5 - k * 0.8;
           g.globalAlpha = 0.35;
@@ -132,7 +131,6 @@ export const VFX = {
           break;
         }
 
-        /* ── ระเบิด ── */
         case 'explosion': {
           const r = e.size * (0.35 + k * 0.9);
           g.globalAlpha = (1 - k) * 0.85;
@@ -148,7 +146,6 @@ export const VFX = {
           break;
         }
 
-        /* ── คลื่นกระแทก ── */
         case 'shockwave': {
           const r = e.size * k;
           g.globalAlpha = (1 - k) * 0.9;
@@ -164,7 +161,6 @@ export const VFX = {
           break;
         }
 
-        /* ── สายฟ้า (ซิกแซก) ── */
         case 'bolt': {
           const bx = X2, by = Y2;
           g.globalAlpha = (1 - k) * 0.95;
@@ -184,7 +180,6 @@ export const VFX = {
           break;
         }
 
-        /* ── เสาแสง ── */
         case 'beam': {
           const w = e.size * (1 - k * 0.35);
           g.globalAlpha = (1 - k) * 0.55;
@@ -198,7 +193,6 @@ export const VFX = {
           break;
         }
 
-        /* ── รอยไหม้บนพื้น ── */
         case 'decal': {
           g.globalAlpha = (1 - k) * 0.5;
           g.fillStyle = e.color;
@@ -206,7 +200,6 @@ export const VFX = {
           break;
         }
 
-        /* ── วงออร่ารอบตัว (ตามเอนทิตี) ── */
         case 'aura': {
           const pulse = 0.75 + 0.25 * Math.sin(e.t * 9);
           g.globalAlpha = (1 - k) * 0.75;
@@ -219,7 +212,6 @@ export const VFX = {
           break;
         }
 
-        /* ── เส้นความเร็ว ── */
         case 'speedlines': {
           g.globalAlpha = (1 - k) * 0.7;
           g.strokeStyle = e.color;
@@ -235,7 +227,6 @@ export const VFX = {
           break;
         }
 
-        /* ── ดูดเข้าศูนย์กลาง ── */
         case 'implode': {
           g.globalAlpha = (1 - k) * 0.9;
           g.strokeStyle = e.color;
@@ -254,7 +245,6 @@ export const VFX = {
           break;
         }
 
-        /* ── ประกายฟื้นเลือด ── */
         case 'motes': {
           g.globalAlpha = (1 - k) * 0.9;
           g.fillStyle = e.color;
@@ -290,7 +280,6 @@ export const VFX = {
 
 /* ═══════════════════════════════════════════════════════════
    เอฟเฟกต์เฉพาะของแต่ละสกิล — ทุกท่าต้องดูออกทันทีว่าเป็นท่าไหน
-   ctx = { caster, target, skill }
    ═══════════════════════════════════════════════════════════ */
 export function spawnSkillFx(skillId, ctx) {
   const { caster, target } = ctx;
@@ -310,7 +299,6 @@ export function spawnSkillFx(skillId, ctx) {
       break;
 
     case 'fire':
-      // ลูกไฟบินเป็นโค้งไปหาศัตรู แล้วระเบิดทิ้งรอยไหม้ไว้
       VFX.spawn('projectile', {
         from: { x: cx, y: cy }, to: { x: tx, y: ty },
         color: '#ff8f3c', size: 20, dur: 0.3, arc: 14,
@@ -366,7 +354,6 @@ export function spawnSkillFx(skillId, ctx) {
       VFX.spawn('motes', { x: caster.x, y: caster.y, color: '#5fe89b', size: 18, dur: 0.85 });
       break;
 
-    /* ── สกิลสาขาย่อย: ได้เฉดสี/รูปทรงตามเท่ของสาขา ── */
     case 'dig':
       VFX.spawn('shockwave', { x: caster.x, y: caster.y, color: '#ffc94d', color2: '#fff2c0', size: 44, dur: 0.44 });
       Particles.spawn('coin', caster.x, caster.y - 10, { count: 5 });
@@ -427,4 +414,3 @@ export function spawnSkillFx(skillId, ctx) {
       VFX.spawn('arc', { x: cx + caster.dir * 14, y: cy, color: '#ffffff', size: 20, dur: 0.26 });
   }
 }
-

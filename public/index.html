@@ -50,7 +50,7 @@
     </div>
   </div>
   <div class="title-foot">
-    <span>v0.5.0 · ยังไม่เปิดให้เติมเงิน</span>
+    <span>v1.0.0 · ยังไม่เปิดให้เติมเงิน (แต่มีสุลต่านในเซิร์ฟ)</span>
     <span id="title-online">ออนไลน์ 0 คน</span>
   </div>
 </section>
@@ -200,7 +200,7 @@
       <span class="ab-main"><b>AUTO</b><em id="auto-status">ปิดอยู่</em></span>
       <span class="ab-key">Tab</span>
     </button>
-    <button id="btn-autoquest" class="auto-btn" title="ออโต้เควสต์ — รับเควสต์ บายมอน กลับส่งเอง (U)">
+    <button id="btn-autoquest" class="auto-btn" title="ออโต้เควสต์ — รับเควสต์ ตีมอน กลับส่งเอง (U)">
       <span class="ab-icon">🧾</span>
       <span class="ab-main"><b>ออโต้เควสต์</b><em id="autoquest-status">ปิดอยู่</em></span>
       <span class="ab-key">U</span>
@@ -212,6 +212,7 @@
       <button class="sbtn" data-panel="gacha"    title="กาชา (G)">🎰<em>G</em></button>
       <button class="sbtn" data-panel="quest"    title="เควสต์ (Q)">📜<em>Q</em></button>
       <button class="sbtn" data-panel="pet"      title="สัตว์เลี้ยง (P)">🐾<em>P</em></button>
+      <button class="sbtn" data-panel="social"   title="ปาร์ตี้ · PvP · หอคอยบั๊ก · วาร์ป (V)">⚔️<em>V</em></button>
       <button class="sbtn" data-panel="ach"      title="ความสำเร็จ (J)">🏆<em>J</em></button>
       <button class="sbtn" data-panel="stats"    title="สถิติ (C)">📊<em>C</em></button>
       <button class="sbtn" data-panel="settings" title="ตั้งค่า (O)">⚙️<em>O</em></button>
@@ -227,7 +228,7 @@
   <!-- แพเนล -->
   <div id="panels">
     <div class="panel" id="panel-inv">
-      <header><h3>กระเป๋า</h3><button class="x" data-close>×</button></header>
+      <header><h3>กระเป๋า & ตีบวกอุปกรณ์</h3><button class="x" data-close>×</button></header>
       <div class="panel-body">
         <div id="inv-grid" class="inv-grid"></div>
         <div id="inv-detail" class="inv-detail muted">เลือกไอเทมเพื่อดูรายละเอียด</div>
@@ -261,6 +262,11 @@
       <footer><span id="pet-cap" class="muted small"></span></footer>
     </div>
 
+    <div class="panel" id="panel-social">
+      <header><h3>ปาร์ตี้ · ประลอง PvP · หอคอยบั๊ก · วาร์ปโซน</h3><button class="x" data-close>×</button></header>
+      <div class="panel-body"><div id="social-body"></div></div>
+    </div>
+
     <div class="panel" id="panel-ach">
       <header><h3>ความสำเร็จ</h3><button class="x" data-close>×</button></header>
       <div class="panel-body">
@@ -285,28 +291,23 @@
       <div class="panel-body">
         <table class="keys">
           <tr><td>คลิกซ้ายที่พื้น</td><td>เดินไปจุดนั้น (หาทางอัตโนมัติ)</td></tr>
-          <tr><td>คลิกซ้ายที่มอน</td><td>เดินเข้าไปแล้วตีอัตโนมัติ</td></tr>
-          <tr><td>กดค้าง + ลาก</td><td>เดินต่อเนื่องตามเมาส์</td></tr>
+          <tr><td>คลิกซ้ายที่มอน / บอท(PK)</td><td>เดินเข้าไปแล้วตีอัตโนมัติ</td></tr>
+          <tr><td>ลูกกลิ้งเมาส์ (Wheel)</td><td>ซูมกล้องเข้า-ออกในโหมด 3D</td></tr>
           <tr><td>คลิกขวา</td><td>ยกเลิกเป้าหมาย/เส้นทาง</td></tr>
           <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / ลูกศร</td><td>เดินเอง (ใช้คู่กับเมาส์ได้)</td></tr>
-          <tr><td><kbd>Space</kbd></td><td>โจมตีมอนใกล้สุด</td></tr>
-          <tr><td><kbd>1</kbd>–<kbd>6</kbd></td><td>สกิล · ยา HP · ยา MP · <b>ลูกแก้วจับมอน</b> · <b>ยาฟื้นสัตว์เลี้ยง</b></td></tr>
-          <tr><td><kbd>Tab</kbd></td><td><b>เปิด/ปิดโหมด AUTO</b> (เกมเล่นให้เอง) — กดปุ่มเดินเองจะปิดให้อัตโนมัติ</td></tr>
-          <tr><td><kbd>U</kbd></td><td><b>เปิด/ปิดออโต้เควสต์</b> — รับเควสต์ ฆ่ามอนตามเป้า เก็บของ กลับส่งให้เอง</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>โจมตีมอนหรือคู่ประลองใกล้สุด</td></tr>
+          <tr><td><kbd>1</kbd>–<kbd>7</kbd></td><td>สกิล · ยา HP · ยา MP · <b>ลูกแก้วจับมอน</b> · <b>ยาฟื้นสัตว์เลี้ยง</b></td></tr>
+          <tr><td><kbd>Tab</kbd></td><td><b>เปิด/ปิดโหมด AUTO</b> (เกมเล่นให้เอง)</td></tr>
+          <tr><td><kbd>U</kbd></td><td><b>เปิด/ปิดออโต้เควสต์</b> — รับเควสต์ ตีมอน เก็บของ กลับส่งเอง</td></tr>
+          <tr><td><kbd>V</kbd></td><td><b>ปาร์ตี้ · ประลอง PvP · ไต่หอคอยบั๊ก · วาร์ป 3 โซน</b></td></tr>
           <tr><td><kbd>E</kbd></td><td>เปิดหีบสมบัติ / คุย NPC ที่อยู่ใกล้</td></tr>
-          <tr><td><kbd>I</kbd> <kbd>K</kbd> <kbd>G</kbd> <kbd>Q</kbd> <kbd>P</kbd> <kbd>J</kbd> <kbd>C</kbd> <kbd>O</kbd></td><td>กระเป๋า · สกิล · กาชา · เควสต์ · <b>สัตว์เลี้ยง</b> · ความสำเร็จ · สถิติ · ตั้งค่า</td></tr>
-          <tr><td><kbd>F5</kbd></td><td>เซฟเกม</td></tr>
-          <tr><td><kbd>F3</kbd></td><td>เปิด/ปิดตัววัดประสิทธิภาพ</td></tr>
+          <tr><td><kbd>I</kbd> <kbd>K</kbd> <kbd>G</kbd> <kbd>Q</kbd> <kbd>P</kbd> <kbd>V</kbd> <kbd>J</kbd> <kbd>C</kbd> <kbd>O</kbd></td><td>กระเป๋า · สกิล · กาชา · เควสต์ · สัตว์เลี้ยง · ประลอง/ตี้ · ความสำเร็จ · สถิติ · ตั้งค่า</td></tr>
+          <tr><td><kbd>F5</kbd> / <kbd>F3</kbd></td><td>เซฟเกม / เปิด-ปิดตัววัดประสิทธิภาพ</td></tr>
           <tr><td><kbd>Esc</kbd></td><td>ปิดแพเนล / เมนูหยุดชั่วคราว</td></tr>
         </table>
-        <p class="small muted"><b>โหมด AUTO:</b> กด <kbd>Tab</kbd> หรือคลิกปุ่ม 🤖 — ตัวละครจะหาเป้า เดินเข้าหา ตี
-          ใช้สกิล และกินยาให้เอง ปรับความดุดัน/ระยะหาเป้าได้ที่ตั้งค่า (O)</p>
-        <p class="small muted"><b>การจับสัตว์เลี้ยง:</b> ตีมอนให้เลือดเหลือน้อย → คลิกที่มอน → กด <kbd>5</kbd> โยนลูกแก้ว
-          เลือดยิ่งน้อยยิ่งจับง่าย และมอน <b>elite</b> ให้สัตว์เลี้ยงระดับสูงกว่า ลูกแก้วหาได้จากมอน กับร้านค้า</p>
-        <p class="small muted"><b>เคล็ดลับ:</b> มอนสีทอง/ม่วงคือ <b>มอนระดับ elite</b> — เลือดเยอะกว่า แต่ของดรอปดีกว่ามาก</p>
-        <p class="small muted"><b>เคล็ดลับ:</b> บอสโลกจะขึ้นวงแดงก่อนฟาด — ถอยออกจากวงแล้วคุณจะ "หลบทัน"</p>
-        <p class="small muted"><b>หีบสมบัติ:</b> มี 7 หีบกระจายอยู่ทั่วแผนที่ จุดทองในมินิแมปคือหีบที่ยังไม่เปิด</p>
-        <p class="small muted">เกร็ด: มอนทุกตัวมีเลือด แต่มอนบางตัวไม่มีความคิด อย่าตกใจ</p>
+        <p class="small muted"><b>3 แมพใหญ่:</b> หมู่บ้านโนบอดี้ (แมพ 1) · ดินแดนมาร (แมพ 2) · แดนเซิร์ฟเถื่อน (แมพ 3) เดินเข้าประตู Portal หรือกดวาร์ปด่วนได้ที่หน้าต่าง <kbd>V</kbd></p>
+        <p class="small muted"><b>ตีบวก & ยันต์กันแตก:</b> ตีบวกอุปกรณ์ในกระเป๋า (<kbd>I</kbd>) เพิ่มสเตตัสจริงทุกขั้น และตั้งแต่ +5 ขึ้นไปจะมีวงออร่าใต้เท้า! พกยันต์กันแตกไว้จะช่วยกันของหายตอนตี +7 ถึง +10</p>
+        <p class="small muted"><b>ปาร์ตี้ & PvP & หอคอยบั๊ก:</b> กด <kbd>V</kbd> เพื่อชวนบอทเข้าปาร์ตี้ช่วยรุมตีมอน, เปิดโหมด PK ท้าตีบอทเกรียนชิงยศ, หรือท้าทายดันเจี้ยนหอคอยบั๊ก!</p>
       </div>
     </div>
   </div>

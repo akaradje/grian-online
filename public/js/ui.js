@@ -6,10 +6,13 @@
 
 import {
   CLASSES, SKILLS, ITEMS, QUESTS, GACHA, NPCS, ADVANCED,
-  RANDOM_NAME_A, RANDOM_NAME_B, RANDOM_NAME_C, UPGRADE,
+  RANDOM_NAME_A, RANDOM_NAME_B, RANDOM_NAME_C, UPGRADE, GUILD_BUFFS,
 } from './data.js';
 import { SPR } from './sprites.js';
-import { addItem, removeItem, countItem, recalcPlayer, effAtk, effSpd, dropBonus, playerSkills } from './entities.js';
+import {
+  addItem, removeItem, countItem, recalcPlayer, effAtk, effSpd, dropBonus,
+  playerSkills, playerAura, pvpRank, partyBots,
+} from './entities.js';
 import {
   acceptQuest, completeQuest, questById, questProgress, doGacha, saveGame,
   wipeSave, listSlots, SAVE_SLOTS, exportSave, importSave, applySave,
@@ -45,7 +48,7 @@ const SETTINGS_SCHEMA = [
   { k: 'autoPotion', label: 'AUTO: กินยาให้เองเมื่อเลือด/มานาน้อย', type: 'bool' },
   { k: 'chatFilter', label: 'กรองแชท', type: 'select', options: [['all', 'ทั้งหมด'], ['world', 'โลก + ระบบ'], ['none', 'ระบบอย่างเดียว']] },
   { k: 'autoQuality', label: 'ปรับคุณภาพเองถ้าเฟรมตก', type: 'bool' },
-  { k: 'touchControls', label: 'ปุ่มบังคับแบบติแตะ', type: 'select', options: [['auto', 'อัตโนมัติ (ตรวจอุปกรณ์)'], ['on', 'เปิดเสมอ'], ['off', 'ปิด']] },
+  { k: 'touchControls', label: 'ปุ่มบังคับแบบแตะ', type: 'select', options: [['auto', 'อัตโนมัติ (ตรวจอุปกรณ์)'], ['on', 'เปิดเสมอ'], ['off', 'ปิด']] },
   { k: 'render3d', label: 'กราฟิก 3D (แสง/น้ำ/อากาศ)', type: 'select', options: [['auto', 'อัตโนมัติ (ตรวจการ์ดจอ)'], ['on', 'เปิด'], ['off', 'ปิด (2D)']] },
 ];
 
@@ -86,7 +89,7 @@ export const UI = {
       'btn-fatal-retry', 'btn-import', 'btn-export', 'save-code', 'tooltip',
       'pet-hud', 'pet-face', 'ph-name', 'ph-lv', 'bar-php', 'txt-php',
       'target-box', 'tb-name', 'bar-thp', 'txt-thp',
-      'pet-list', 'pet-cap', 'btn-auto', 'auto-status', 'skill-banner', 'zone-banner',
+      'pet-list', 'pet-cap', 'social-body', 'btn-auto', 'auto-status', 'skill-banner', 'zone-banner',
       'btn-autoquest', 'autoquest-status',
       'advance', 'adv-grid', 'adv-title'].forEach((id) => {
         el[id] = document.getElementById(id);
@@ -103,7 +106,6 @@ export const UI = {
     const h = this.h;
     const d = this.deps;
 
-    // เสียงคลิกให้ทุกปุ่มในเกม (จุดเดียว ไม่ต้องใส่ทีละปุ่ม)
     document.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button, .sbtn, .slot, .inv-slot, .ctab, .class-card')) d.Audio?.play('click');
     }, true);
@@ -143,7 +145,6 @@ export const UI = {
       };
     });
 
-    // ปุ่มเปิดแพเนลทั้งหมด (รวมปุ่มในเมนูหยุดชั่วคราว)
     $$('[data-panel]').forEach((b) => {
       b.onclick = () => this.togglePanel(b.dataset.panel);
     });
@@ -153,8 +154,8 @@ export const UI = {
     $$('[data-close]').forEach((b) => { b.onclick = () => this.closePanels(); });
 
     el_on(this.el['btn-respawn'], 'click', () => h.onRespawn());
-    el_on(this.el['btn-resume'], 'click', () => h.onPauseToggle());
-    el_on(this.el['btn-quit'], 'click', () => h.onQuit());
+    el_on(this.el['btn-resume'], 'click', () => d.onPauseToggle());
+    el_on(this.el['btn-quit'], 'click', () => d.onQuit());
     el_on(this.el['btn-reset-settings'], 'click', () => {
       this.deps.Settings.reset();
       this.deps.Settings.apply(this.deps.Audio);
@@ -182,9 +183,6 @@ export const UI = {
       this.refreshTitleMenu();
     });
 
-    // การควบคุมด้วยเมาส์ทั้งหมดอยู่ใน main.js (ต้องใช้ตัวหาทาง A*)
-
-    // tooltip สำหรับฮอตบาร์
     this.el['hotbar'].addEventListener('mouseover', (e) => {
       const s = e.target.closest('.slot');
       if (s) this.showTooltip(s);
@@ -243,7 +241,6 @@ export const UI = {
 
   buildTitleMenu() { this.refreshTitleMenu(); },
 
-  /** รูปตัวละครในการ์ดผู้เล่น — เดิมมี canvas ค้างไว้แต่ไม่มีใครวาด ทำให้การ์ดเห็นว่าง */
   drawPortrait() {
     const p = this.state.player;
     const cv = this.el['pc-face'];
@@ -306,7 +303,7 @@ export const UI = {
     let ticker = null;
     const tick = () => {
       if (i >= steps.length) {
-        clearInterval(ticker);      // เดิมไม่เคยล้าง — interval ค้างทำงานตลอดทั้งเซสชัน
+        clearInterval(ticker);
         setTimeout(() => {
           this.el.boot.classList.add('hidden');
           this.el['title-menu'].classList.remove('hidden');
@@ -391,13 +388,11 @@ export const UI = {
     const p = state.player;
     const el = this.el;
 
-    // ── หลอดเลือด/มานา/EXP: เขียนเมื่อค่าเปลี่ยนเกิน 0.5% เท่านั้น ──
     this._bar(el['bar-hp'], el['txt-hp'], p.hp / p.maxHp, `${Math.round(p.hp)}/${p.maxHp}`, 'hp');
     this._bar(el['bar-mp'], el['txt-mp'], p.mp / p.maxMp, `${Math.round(p.mp)}/${p.maxMp}`, 'mp');
     const need = needXp(p.lvl);
     this._bar(el['bar-xp'], el['txt-xp'], p.exp / need, `${Math.floor((p.exp / need) * 100)}%`, 'xp');
 
-    // ── เตือนเลือดต่ำ: หลอดกระพริบ + เสียงเตือนครั้งเดียวจนพ้นภัย ──
     const danger = p.hp / p.maxHp < 0.25 && !p.dead;
     if (this._hpDanger !== danger) {
       this._hpDanger = danger;
@@ -411,10 +406,10 @@ export const UI = {
       this._lv = p.lvl;
       el['pc-lv'].textContent = p.lvl;
     }
-    const idStr = `${p.name}|${p.cls.icon}|${p.cls.name}|${p.advId || ''}|${p.companion ? p.companion.e : ''}`;
+    const idStr = `${p.name}|${p.cls.icon}|${p.cls.name}|${p.advId || ''}|${p.companion ? p.companion.e : ''}|${state.pvpMode ? 'PK' : ''}`;
     if (this._idStr !== idStr) {
       this._idStr = idStr;
-      el['pc-name'].textContent = p.name;
+      el['pc-name'].textContent = p.name + (state.pvpMode ? ' [PK]' : '');
       el['pc-class'].textContent = p.cls.icon + ' ' + p.cls.name
         + (p.advId && ADVANCED[p.advId] ? ` · ${ADVANCED[p.advId].name}` : '')
         + (p.companion ? ` · ${p.companion.e}` : '');
@@ -423,7 +418,6 @@ export const UI = {
     this._num(el['pc-gem'], p.gems, 'gem');
     this._num(el['pc-ticket'], p.tickets, 'ticket');
 
-    // ── เซิร์ฟเวอร์ ──
     this._num(el['srv-online'], `ออนไลน์ ${state.onlineCount} คน · ${state.zoneName}`, 'online');
     this._num(el['srv-ping'], `ping ${state.ping}ms`, 'ping');
     if (this.deps.DayNight) {
@@ -432,7 +426,6 @@ export const UI = {
     }
     this._num(el['boss-timer'], state.bossText, 'boss');
 
-    // ── มินิแมป (วาดทุกเฟรม แต่เป็นแคนวาสเล็ก) ──
     this._minimapTick = (this._minimapTick || 0) - frameDt;
     if (this._minimapTick <= 0) {
       this._minimapTick = 0.1;
@@ -459,11 +452,10 @@ export const UI = {
     this.renderChat(state);
   },
 
-  /** อัปเดตหลอดแบบไม่แตะ DOM ถ้าไม่เปลี่ยน */
   _bar(node, txt, ratio, label, key) {
     this._barV = this._barV || {};
     const r = Math.max(0, Math.min(1, ratio));
-    const q = Math.round(r * 200) / 200;               // ปัดเป็น 0.5% กันการเขียนถี่
+    const q = Math.round(r * 200) / 200;
     const k = key + '|' + q + '|' + label;
     if (this._barV[key] === k) return;
     this._barV[key] = k;
@@ -479,7 +471,7 @@ export const UI = {
     node.textContent = v;
   },
 
-  /* ── ป้ายชื่อ: transform + dirty-check (ไม่ทำให้ layout ใหม่) ── */
+  /* ── ป้ายชื่อ: transform + dirty-check ── */
   renderNametags(state, view) {
     const p = state.player;
     const { ox, oy, scale, camX, camY, w, h } = view;
@@ -490,7 +482,7 @@ export const UI = {
       let sx, sy;
       if (view.project) {
         const pr = view.project(wx, wy, spriteH || 16);
-        sx = pr.sx; sy = pr.sy;
+        sx = ox + pr.sx; sy = oy + pr.sy;
       } else {
         sx = ox + (wx - camX) * scale;
         sy = oy + (wy - camY) * scale - (spriteH || 16) * scale - 4;
@@ -511,7 +503,6 @@ export const UI = {
           : `<div class="nbar"><i style="width:${Math.max(0, ratio / 40 * 100)}%"></i></div>`;
         e.innerHTML = `<div class="nn">${html}</div>${bar}`;
       }
-      // transform ไม่กระตุ้น layout ต่างจาก left/top
       e.style.transform = `translate(-50%,-100%) translate(${Math.round(sx)}px,${Math.round(sy)}px)`;
       seen.add(key);
     };
@@ -524,16 +515,21 @@ export const UI = {
     }
     for (const n of state.npcs) put('n' + n.id, n.x, n.y, esc(n.name), 'npc', null, 16);
     for (const b of state.bots) {
+      if (b.koT > 0) continue;
+      const bCls = b.inParty ? 'bot party' : (b.hostile || state.pvpMode ? 'bot pk' : 'bot');
+      const prefix = b.inParty ? '[ตี้] ' : (b.hostile ? '[PK] ' : '');
+      const hpR = b.afk ? null : (b.hp / (b.maxHp || 100));
       put('b' + b._uid, b.x, b.y,
-        `${esc(b.name)} <span style="color:#9aa4c8">${b.lvl}</span>`, 'bot', b.afk ? null : 1, 16);
+        `${prefix}${esc(b.name)} <span style="color:#9aa4c8">${b.lvl}</span>`, bCls, hpR, 16);
     }
-    // สัตว์เลี้ยง — เดิมไม่มีป้ายชื่อในโลกเลย รู้ได้อย่างไรว่าตัวไหนตัวไหน
     for (const pt of state.pets) {
       put('p' + pt.uid, pt.x, pt.y,
         `${pt.species.icon} ${esc(pt.nickname)} <span style="color:${pt.rarity.color}">Lv.${pt.lvl}</span>`,
         pt.ko ? 'petko' : 'pet', pt.hp / pt.maxHp, 14);
     }
-    put('me', p.x, p.y, esc(p.name), 'me', null, 16);
+    const aura = playerAura(p);
+    const meLabel = esc(p.name) + (aura ? ` <span style="color:${aura.color}">+${aura.lvl}</span>` : '');
+    put('me', p.x, p.y, meLabel, 'me', null, 16);
 
     for (const [k, e] of this.tagMap) {
       if (!seen.has(k)) { e.remove(); this.tagMap.delete(k); }
@@ -548,7 +544,7 @@ export const UI = {
       let sx, sy;
       if (view.project) {
         const pr = view.project(f.x, f.y, 14);
-        sx = pr.sx; sy = pr.sy;
+        sx = ox + pr.sx; sy = oy + pr.sy;
       } else {
         sx = ox + (f.x - camX) * scale;
         sy = oy + (f.y - camY) * scale;
@@ -577,7 +573,6 @@ export const UI = {
   renderChat(state) {
     const log = this.el['chat-log'];
     const isSys = this.activeCh === 'system';
-    // ตัวกรองแชทจากตั้งค่า — เดิมไม่เคยถูกใช้เลย (ตั้งค่าเงียบ)
     const filter = this.deps.Settings.get('chatFilter');
     const show = (m) => {
       if (filter === 'none') return m.ch === 'system';
@@ -640,7 +635,6 @@ export const UI = {
       const { node, it } = this.slots[i];
       if (it.type === 'skill') {
         const sk = SKILLS[it.id];
-        // เทียบด้วยตัวเลข ไม่สร้างสตริงทุกเฟรม (ลด GC)
         const cdq = Math.round((p.cooldowns[it.id] || 0) * 10);
         const nomp = p.mp < sk.mp ? 1 : 0;
         if (node._cdq === cdq && node._nomp === nomp) continue;
@@ -733,8 +727,7 @@ export const UI = {
       + `node ใน DOM ${document.getElementsByTagName('*').length} · เฟรมกระตุก ${Perf.longFrames}`;
   },
 
-  /* ── ปุ่ม AUTO ── */
-  refreshAuto(state) {
+  refreshAuto() {
     const btn = this.el['btn-auto'];
     if (!btn) return;
     const s = Auto.status();
@@ -745,7 +738,6 @@ export const UI = {
     this.el['auto-status'].textContent = s.label.replace(/^AUTO:?\s*/, '') || 'ปิดอยู่';
   },
 
-  /** ปุ่มออโต้เควสต์ — แสดงสถานะว่ากำลังทำอะไร */
   refreshAutoQuest(state) {
     const btn = this.el['btn-autoquest'];
     if (!btn) return;
@@ -757,7 +749,6 @@ export const UI = {
     this.el['autoquest-status'].textContent = s.label;
   },
 
-  /** ป้ายชื่อสกิลลอยขึ้นกลางจอตอนร่าย */
   skillBanner(id, sk) {
     const el = this.el['skill-banner'];
     if (!el || !sk) return;
@@ -772,11 +763,10 @@ export const UI = {
     el.textContent = `${sk.icon} ${sk.name}`;
     el.style.color = colors[id] || '#ffffff';
     el.classList.remove('show');
-    void el.offsetWidth;                  // บังคับให้ animation เล่นใหม่
+    void el.offsetWidth;
     el.classList.add('show');
   },
 
-  /** แบนเนอร์บอกเขตพื้นที่เมื่อเดินเข้าโซนใหม่ (มาตรฐานของ MMO ทุกเจ้า) */
   zoneBanner(name) {
     const e = this.el['zone-banner'];
     if (!e) return;
@@ -787,7 +777,6 @@ export const UI = {
     this._zoneT = setTimeout(() => e.classList.add('hidden'), 2200);
   },
 
-  /* ── เป้าหมายที่คลิกเลือก ── */
   setTarget(m) {
     const box = this.el['target-box'];
     if (!box) return;
@@ -810,7 +799,6 @@ export const UI = {
     this.el['txt-thp'].textContent = `${Math.max(0, Math.round(m.hp))}/${m.maxHp}`;
   },
 
-  /* ── แถบสัตว์เลี้ยงใน HUD ── */
   refreshPetHud(state) {
     const box = this.el['pet-hud'];
     if (!box) return;
@@ -835,7 +823,6 @@ export const UI = {
     cv.style.borderColor = pet.rarity.color;
   },
 
-  /* ── แพเนลสัตว์เลี้ยง ── */
   renderPets() {
     const state = this.state;
     const box = this.el['pet-list'];
@@ -920,11 +907,120 @@ export const UI = {
     if (name === 'ach') this.renderAchievements();
     if (name === 'settings') this.buildSettings();
     if (name === 'pet') this.renderPets();
+    if (name === 'social') this.renderSocial();
   },
 
   closePanels() {
     $$('.panel').forEach((p) => p.classList.remove('open'));
     this.openPanelName = null;
+  },
+
+  /* ── แพเนลใหม่ v1.0.0: ปาร์ตี้ · ประลอง PvP · หอคอยบั๊ก · วาร์ปโซน ── */
+  renderSocial() {
+    const state = this.state;
+    const p = state.player;
+    const box = this.el['social-body'];
+    if (!box || !p) return;
+
+    const rank = pvpRank(p);
+    const activeWave = state.monsters.filter((m) => !m.dead && m.towerWave).length;
+    const nextFloor = (p.ctr.towerFloor || 0) + 1;
+    const ptBots = partyBots(state);
+    const allBots = (state.bots || []).filter((b) => !b.afk);
+
+    box.innerHTML = `
+      <div class="social-sec">
+        <h4><span>🗺️ วาร์ปด่วนข้ามแมพ (3 โซน)</span><span class="small muted">อยู่: ${esc(state.world.zoneLabel)}</span></h4>
+        <p>ไม่ต้องเดินหาประตู Portal เองให้เมื่อยขา — กดวาร์ปข้ามโซนได้ทันที</p>
+        <div class="warp-btns">
+          <button class="btn btn-mini ${state.mapId === 'field' ? 'btn-primary' : ''}" data-warp="field">🏞️ หมู่บ้านโนบอดี้ (Lv.1+)</button>
+          <button class="btn btn-mini ${state.mapId === 'hell' ? 'btn-primary' : ''}" data-warp="hell">🔥 ดินแดนมาร (Lv.12+)</button>
+          <button class="btn btn-mini ${state.mapId === 'cyber' ? 'btn-primary' : ''}" data-warp="cyber">💻 แดนเซิร์ฟเถื่อน (Lv.16+)</button>
+        </div>
+      </div>
+
+      <div class="social-sec">
+        <h4>
+          <span>🥊 ประลอง PvP กับบอทเกรียน</span>
+          <span class="pvp-badge ${state.pvpMode ? 'on' : ''}">${state.pvpMode ? 'โหมด PK: เปิดอยู่' : 'โหมด PK: ปิดอยู่'}</span>
+        </h4>
+        <p>ยศปัจจุบัน: <b style="color:var(--gold)">${esc(rank.title)}</b> (ATK +${rank.bonusAtk}) · ชนะประลองสะสม <b>${p.ctr.pvpWins || 0}</b> ครั้ง</p>
+        <div class="social-btns">
+          <button class="btn btn-mini ${state.pvpMode ? '' : 'btn-primary'}" id="btn-pvp-toggle">
+            ${state.pvpMode ? '🛡️ ปิดโหมด PK' : '⚔️ เปิดโหมด PK (ตีบอทได้)'}
+          </button>
+          <button class="btn btn-mini" id="btn-pvp-duel">📣 เรียกบอทเกรียนมาท้าตีเดี๋ยวนี้!</button>
+        </div>
+      </div>
+
+      <div class="social-sec">
+        <h4>
+          <span>🗼 ดันเจี้ยนไต่หอคอยบั๊ก</span>
+          <span class="small" style="color:#4ae8ff">สูงสุด: ชั้น ${p.ctr.towerFloor || 0}</span>
+        </h4>
+        <p>เสกฝูงมอนสเตอร์ประจำชั้น + บอสหัวหน้าชั้นมาล้อมตัว เคลียร์หมดรับเพชร เงิน และยันต์กันแตกทุก 2 ชั้น!</p>
+        <div class="social-btns">
+          <button class="btn btn-mini btn-primary" id="btn-tower-start" ${activeWave > 0 ? 'disabled' : ''}>
+            ${activeWave > 0 ? `กำลังสู้ชั้น ${state.tower?.floor || nextFloor} (เหลือ ${activeWave} ตัว)` : `🚀 ลุยหอคอยบั๊ก ชั้นที่ ${nextFloor}`}
+          </button>
+        </div>
+      </div>
+
+      <div class="social-sec">
+        <h4>
+          <span>🤝 ปาร์ตี้บอทจำลอง & บัฟกิลด์</span>
+          <span class="small" style="color:#e8a3ff">สมาชิกตี้ ${ptBots.length}/2 คน (ATK +${ptBots.length * 10}% · EXP +${ptBots.length * 15}%)</span>
+        </h4>
+        <p>ชวนบอทในแมพเข้าตี้เพื่อเดินตามและช่วยรุมตีมอนสเตอร์จริง หรือบริจาคเงินรับบัฟกิลด์</p>
+        <div class="social-btns" style="margin-bottom:10px">
+          ${GUILD_BUFFS.map((gb) => `<button class="btn btn-mini" data-gbuff="${gb.id}" title="${esc(gb.desc)}">${gb.icon} ${esc(gb.name)} (${gb.cost}💰)</button>`).join('')}
+        </div>
+        <div class="bot-grid">
+          ${allBots.slice(0, 8).map((b) => `
+            <div class="bot-card ${b.inParty ? 'in-party' : ''}">
+              <div>
+                <div class="bc-name">${esc(b.name)}</div>
+                <div class="bc-sub">Lv.${b.lvl} · HP ${Math.round(b.hp)}/${b.maxHp}</div>
+              </div>
+              <button class="btn btn-mini ${b.inParty ? 'btn-ghost' : ''}" data-party-uid="${b._uid}">
+                ${b.inParty ? 'เตะออก' : 'ชวนเข้าตี้'}
+              </button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    box.querySelectorAll('[data-warp]').forEach((b) => {
+      b.onclick = () => {
+        this.h.onWarp?.(b.dataset.warp);
+        this.closePanels();
+      };
+    });
+    el_on(box.querySelector('#btn-pvp-toggle'), 'click', () => {
+      this.h.onTogglePvp?.();
+      this.renderSocial();
+    });
+    el_on(box.querySelector('#btn-pvp-duel'), 'click', () => {
+      this.h.onChallengeBot?.();
+      this.closePanels();
+    });
+    el_on(box.querySelector('#btn-tower-start'), 'click', () => {
+      this.h.onStartTower?.();
+      this.closePanels();
+    });
+    box.querySelectorAll('[data-gbuff]').forEach((b) => {
+      b.onclick = () => {
+        this.h.onGuildBuff?.(b.dataset.gbuff);
+        this.renderSocial();
+      };
+    });
+    box.querySelectorAll('[data-party-uid]').forEach((b) => {
+      b.onclick = () => {
+        this.h.onToggleParty?.(Number(b.dataset.partyUid));
+        this.renderSocial();
+      };
+    });
   },
 
   renderInventory() {
@@ -941,56 +1037,77 @@ export const UI = {
       g.appendChild(b);
     });
     this.el['inv-cap'].textContent =
-      `ใช้ ${p.inv.length}/40 ช่อง · เงิน ${Math.floor(p.gold).toLocaleString()} · หินอัพเกรด ${countItem(p, UPGRADE.stoneItem)}`;
+      `ใช้ ${p.inv.length}/40 ช่อง · เงิน ${Math.floor(p.gold).toLocaleString()} · หินอัพเกรด ${countItem(p, UPGRADE.stoneItem)} · ยันต์กันแตก ${countItem(p, UPGRADE.protectItem)}`;
     if (this.selectedInv) this.renderInvDetail(this.selectedInv);
+    else this.renderInvDetail(p.inv[0]?.id || null);
   },
 
   renderInvDetail(id) {
-    const d = ITEMS[id]; const p = this.state.player;
+    const d = id ? ITEMS[id] : null;
+    const p = this.state.player;
     const box = this.el['inv-detail'];
-    if (!d) { box.innerHTML = '<span class="muted">เลือกไอเทมเพื่อดูรายละเอียด</span>'; return; }
     const stats = [];
-    if (d.atk) stats.push(`ATK +${d.atk}`);
-    if (d.luck) stats.push(`LUCK +${d.luck}`);
-    if (d.heal) stats.push(`ฟื้น HP ${d.heal}`);
-    if (d.healMp) stats.push(`ฟื้น MP ${d.healMp}`);
+    if (d) {
+      if (d.atk) stats.push(`ATK +${d.atk}`);
+      if (d.def) stats.push(`DEF +${d.def}`);
+      if (d.luck) stats.push(`LUCK +${d.luck}`);
+      if (d.heal) stats.push(`ฟื้น HP ${d.heal}`);
+      if (d.healMp) stats.push(`ฟื้น MP ${d.healMp}`);
+    }
     const acts = [];
-    if (d.kind === 'use') acts.push('<button class="btn btn-mini" data-a="use">ใช้</button>');
-    if (d.kind === 'equip') acts.push('<button class="btn btn-mini" data-a="equip">สวมใส่</button>');
-    if (d.kind === 'sell') acts.push(`<button class="btn btn-mini" data-a="sell">ขาย ${d.price} เงิน</button>`);
-    if (d.kind === 'gacha') acts.push('<span class="small muted">ใช้ที่แพเนลกาชา (G)</span>');
-    if (d.kind === 'quest') acts.push('<span class="small muted">ไอเทมเควสต์ ขายไม่ได้</span>');
+    if (d) {
+      if (d.kind === 'use') acts.push('<button class="btn btn-mini" data-a="use">ใช้</button>');
+      if (d.kind === 'equip') acts.push('<button class="btn btn-mini" data-a="equip">สวมใส่</button>');
+      if (d.kind === 'sell') acts.push(`<button class="btn btn-mini" data-a="sell">ขาย ${d.price} เงิน</button>`);
+      if (d.kind === 'gacha') acts.push('<span class="small muted">ใช้ที่แพเนลกาชา (G)</span>');
+      if (d.kind === 'quest') acts.push('<span class="small muted">ไอเทมเควสต์ ขายไม่ได้</span>');
+    }
 
-    // ── ส่วนอัพเกรด (แสดงเฉพาะเมื่อมีอุปกรณ์สวมอยู่) ──
+    // ── ส่วนอัพเกรด + หลอมยันต์กันแตก ──
     let upHtml = '';
+    const charms = countItem(p, UPGRADE.protectItem);
+    const aura = playerAura(p);
     for (const [slot, label] of [['weapon', 'อาวุธ'], ['acc', 'เครื่องประดับ']]) {
       const eq = p.equip[slot];
       if (!eq) { upHtml += `<div class="up-row empty"><span>${label}</span><em>ไม่ได้สวม</em></div>`; continue; }
       const ed = ITEMS[eq.id];
       const lvl = eq.lvl || 0;
+      const per = UPGRADE.statPerLvl?.[slot] || { atk: 2, def: 0, luck: 1 };
+      const bonusTxt = `+${lvl * (per.atk || 0)} ATK${per.def ? ` · +${lvl * per.def} DEF` : ''} · +${lvl * (per.luck || 0)} LUCK`;
       const nextRate = UPGRADE.rates[lvl];
       const gold = UPGRADE.goldPerTry(lvl);
       const breakC = lvl >= UPGRADE.breakFrom ? UPGRADE.breakChance[lvl] : 0;
       const maxed = lvl >= UPGRADE.maxLevel;
       upHtml += `<div class="up-row">
-        <div class="up-head"><b>${ed.icon} ${esc(ed.name)}</b><span class="up-lv">+${lvl}</span></div>
+        <div class="up-head"><b>${ed.icon} ${esc(ed.name)}</b><span class="up-lv">+${lvl} (${bonusTxt})</span></div>
         <div class="up-body">
           ${maxed ? '<span class="muted">อัพเกรดสูงสุดแล้ว</span>' : `
             <span>โอกาสสำเร็จ <b>${(nextRate * 100).toFixed(0)}%</b></span>
             <span>ใช้เงิน <b>${gold}</b> + หิน 1</span>
-            ${breakC ? `<span class="up-risk">เสี่ยงหัก ${(breakC * 100).toFixed(0)}%</span>` : ''}
+            ${breakC ? `<span class="up-risk">เสี่ยงหัก ${(breakC * 100).toFixed(0)}%${charms > 0 ? ' (มียันต์คุ้มครอง!)' : ''}</span>` : ''}
             <button class="btn btn-mini btn-primary" data-up="${slot}">อัพเกรด</button>`}
         </div>
       </div>`;
     }
 
+    const itemHeader = d
+      ? `<h4>${d.icon} ${esc(d.name)}</h4>
+         <div class="stat">${stats.join(' · ') || 'ไม่มีสเตตัส'}</div>
+         <div class="desc">${esc(d.desc || '')}</div>
+         <div class="acts">${acts.join('')}</div>`
+      : `<div class="muted small">เลือกไอเทมในกระเป๋าเพื่อดูรายละเอียด</div>`;
+
     box.innerHTML = `
-      <h4>${d.icon} ${esc(d.name)}</h4>
-      <div class="stat">${stats.join(' · ') || 'ไม่มีสเตตัส'}</div>
-      <div class="desc">${esc(d.desc || '')}</div>
-      <div class="acts">${acts.join('')}</div>
-      <div class="up-title">อัพเกรดอุปกรณ์ <span class="muted small">(${esc(UPGRADE.note)})</span></div>
-      ${upHtml}`;
+      ${itemHeader}
+      <div class="up-title">
+        อัพเกรดอุปกรณ์ ${aura ? `<span style="color:${aura.color}">(${esc(aura.name)} +${aura.lvl})</span>` : ''}
+        <span class="muted small">— ${esc(UPGRADE.note)}</span>
+      </div>
+      ${upHtml}
+      <div style="margin-top:9px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="small muted">🧿 ยันต์กันแตกที่มี: <b>${charms}</b> ใบ</span>
+        <button class="btn btn-mini" id="btn-craft-charm">🧿 หลอมยันต์กันแตก (หิน ${UPGRADE.craftProtectCost.stones} + ${UPGRADE.craftProtectCost.gold} เงิน)</button>
+      </div>`;
 
     box.querySelectorAll('[data-a]').forEach((b) => {
       b.onclick = () => {
@@ -1003,6 +1120,10 @@ export const UI = {
     });
     box.querySelectorAll('[data-up]').forEach((b) => {
       b.onclick = () => { this.h.onUpgrade(b.dataset.up); };
+    });
+    el_on(box.querySelector('#btn-craft-charm'), 'click', () => {
+      this.h.onCraftCharm?.();
+      this.renderInventory();
     });
   },
 
@@ -1103,7 +1224,7 @@ export const UI = {
         <div class="ach-main">
           <div class="ach-name">${esc(a.name)}</div>
           <div class="ach-desc">${esc(a.desc)}</div>
-          <div class="ach-bar"><i style="width:${Math.min(100, (pr.cur / pr.goal) * 100)}%"></i></div>
+          <div class="ach-bar"><i style="width:${Math.min(100, (pr.cur / pr.need || pr.cur / pr.goal) * 100)}%"></i></div>
         </div>
         <div class="ach-prog">${fmtNum(pr.cur)}/${fmtNum(pr.goal)}</div>
       </div>`;
@@ -1146,7 +1267,7 @@ export const UI = {
         if (k === 'particles') this.deps.Particles.quality = v;
         if (k === 'shake') {
           this.deps.Camera.enabled = v > 0;
-          this.deps.Camera.scale = Number(v) || 0;   // 4 ระดับต้องเห็นผลแตกต่าง
+          this.deps.Camera.scale = Number(v) || 0;
         }
         if (k === 'dayNight') this.deps.DayNight.enabled = v;
         if (k === 'showNames' && !v && this.tagMap.size) {
@@ -1164,15 +1285,19 @@ export const UI = {
     const s = this.state;
     const need = needXp(p.lvl);
     const mins = Math.floor(s.time / 60);
+    const rank = pvpRank(p);
     const rows = [
       ['ชื่อ', esc(p.name)], ['อาชีพ', p.cls.name], ['เลเวล', p.lvl],
+      ['ยศประลอง PvP', `${rank.title} (+${rank.bonusAtk} ATK)`],
       ['EXP', `${Math.floor(p.exp)} / ${need}`],
       ['HP', `${Math.round(p.hp)} / ${p.maxHp}`], ['MP', `${Math.round(p.mp)} / ${p.maxMp}`],
-      ['ATK (รวมบัฟ)', Math.round(effAtk(p))], ['DEF', p.def],
+      ['ATK (รวมบัฟ/ตีบวก)', Math.round(effAtk(p))], ['DEF', p.def],
       ['SPD (รวมบัฟ)', Math.round(effSpd(p))], ['LUCK', p.luck],
       ['โอกาสดรอป', `×${dropBonus(p).toFixed(2)}`],
       ['', ''], ['sec', '— สถิติตลอดชีพ —'],
       ['สังหารทั้งหมด', p.kills_total], ['ตายทั้งหมด', p.deaths],
+      ['ชนะ PvP บอท', p.ctr.pvpWins || 0],
+      ['หอคอยบั๊กสูงสุด', `ชั้น ${p.ctr.towerFloor || 0}`],
       ['เก็บไอเทม', p.dropsTotal], ['เปิดกาชา', p.totalPulls],
       ['pity ปัจจุบัน', `${p.pity}/${GACHA.pity}`],
       ['เดินสะสม', `${Math.floor(p.ctr.distance || 0).toLocaleString()} หน่วย`],
@@ -1186,6 +1311,7 @@ export const UI = {
       ['เงินสูงสุดที่เคยถือ', Math.floor(p.maxGold || 0).toLocaleString()],
       ['เพชร', p.gems], ['ตั๋วกาชา', p.tickets],
       ['หินอัพเกรด', countItem(p, UPGRADE.stoneItem)],
+      ['ยันต์กันแตก', countItem(p, UPGRADE.protectItem)],
       ['เปลือกหอย', countItem(p, 'shell')],
     ];
     this.el['stats-body'].innerHTML = rows.map(([k, v]) => {
@@ -1247,8 +1373,8 @@ export const UI = {
 
   showShop(state) {
     const p = state.player;
-    const stock = [['hp_potion', 45], ['mp_potion', 35], ['upgrade_stone', 220],
-      ['capture_ball', 95], ['pet_potion', 65], ['hp_potion_fake', 3], ['bread_expired', 2]];
+    const stock = [['hp_potion', 45], ['mp_potion', 35], ['exp_drink', 140], ['upgrade_stone', 220],
+      ['protect_charm', 550], ['capture_ball', 95], ['pet_potion', 65], ['hp_potion_fake', 3], ['bread_expired', 2]];
     this.el['dlg-text'].innerHTML = 'ร้านค้า (ของแท้ 100% · ของก๊อป 60%)<br><span class="small muted">'
       + stock.map(([id, price]) => `${ITEMS[id].icon} ${esc(ITEMS[id].name)} — ${price} เงิน`).join('<br>')
       + `</span><br><span class="small muted">เงินของคุณ: ${Math.floor(p.gold).toLocaleString()}</span>`;
@@ -1302,7 +1428,7 @@ export const UI = {
   floatText(state, x, y, text, color) {
     this._floatSeq = (this._floatSeq || 0) + 1;
     state.floaters.push({
-      uid: 'u' + this._floatSeq,          // นำหน้าเพื่อไม่ให้ชนกับ uid ของ entities.js
+      uid: 'u' + this._floatSeq,
       x, y, text, color, size: 1, t: 0, dur: 0.9, vy: -26,
     });
   },
@@ -1341,8 +1467,7 @@ export const UI = {
   },
   hideFatal() { this.el['fatal'].classList.add('hidden'); },
 
-  /** ล้างสถานะที่ผูกกับรอบเล่น เพื่อไม่ให้รอบใหม่มีข้อมูลค้าง */
-  resetForNewRun(state) {
+  resetForNewRun() {
     this.lastChatId = 0;
     this.el['chat-log'].innerHTML = '';
     this.el['floaters'].innerHTML = '';
@@ -1365,7 +1490,6 @@ export const UI = {
   },
 };
 
-/* ───────────── เครื่องมือย่อย ───────────── */
 function needXp(lvl) { return Math.floor(70 * Math.pow(lvl, 1.5)) + 30; }
 function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
 function fmtNum(n) { return n >= 10000 ? (n / 1000).toFixed(1) + 'k' : String(n); }

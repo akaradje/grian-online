@@ -838,3 +838,35 @@ body.touch-mode.touch-portrait #rotate-hint{display:block}
   .set-ctl{min-width:150px}
   .set-ctl input[type=range]{width:96px}
 }
+
+/* ═══════════ v1.0.0: ปาร์ตี้ · ประลอง PvP · หอคอยบั๊ก · วาร์ปโซน ═══════════ */
+.ntag.party .nn{color:#e8a3ff;font-weight:700}
+.ntag.party .nbar i{background:#e8a3ff}
+.ntag.pk .nn{color:#ff5f5f;font-weight:800}
+.ntag.pk .nbar i{background:#ff3b3b}
+
+.social-sec{
+  padding:12px;border-radius:10px;background:#0e1220;
+  border:1px solid var(--border);margin-bottom:11px;
+}
+.social-sec h4{
+  font-size:15px;font-weight:700;color:var(--gold);
+  display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;
+}
+.social-sec p{font-size:12.5px;color:var(--muted);margin-bottom:9px}
+.warp-btns,.social-btns{display:flex;gap:8px;flex-wrap:wrap}
+.bot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;margin-top:8px}
+.bot-card{
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+  padding:8px 10px;border-radius:8px;background:var(--panel-2);border:1px solid var(--border);
+  font-size:12.5px;
+}
+.bot-card.in-party{border-color:#e8a3ff;background:linear-gradient(90deg,rgba(160,70,220,.22),var(--panel-2))}
+.bot-card .bc-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bot-card .bc-sub{font-size:11px;color:var(--muted)}
+.pvp-badge{
+  display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;
+  background:rgba(255,95,95,.16);color:var(--red);border:1px solid rgba(255,95,95,.4);
+}
+.pvp-badge.on{background:rgba(65,209,124,.18);color:var(--hp);border-color:rgba(65,209,124,.45)}
+#side-buttons{flex-wrap:wrap;justify-content:flex-end}

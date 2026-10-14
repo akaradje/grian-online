@@ -33,7 +33,7 @@ export const Audio = {
 
   track: null, trackName: null,
   step: 0, nextTime: 0, timer: null, stepDur: 0.13,
-  duck: 0,                 // ลดเสียงเพลงชั่วคราวตอนมี SFX สำคัญ
+  duck: 0,
   lastSfx: Object.create(null),
 
   init() {
@@ -48,7 +48,6 @@ export const Audio = {
     this.master.gain.value = this.vol.master;
     this.master.connect(this.ctx.destination);
 
-    // คอมเพรสเซอร์กันเสียงแตกเวลาตีรัว ๆ
     const comp = this.ctx.createDynamicsCompressor();
     comp.threshold.value = -12; comp.knee.value = 24; comp.ratio.value = 6;
     comp.attack.value = 0.004; comp.release.value = 0.18;
@@ -62,7 +61,6 @@ export const Audio = {
     this.sfxBus.gain.value = this.vol.sfx;
     this.sfxBus.connect(comp);
 
-    // บัฟเฟอร์ noise ใช้ร่วมกันทุกเสียง
     const len = Math.floor(this.ctx.sampleRate * 0.6);
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = buf.getChannelData(0);
@@ -131,7 +129,6 @@ export const Audio = {
   play(name) {
     if (!this.ready || this.muted) return;
     const now = this.ctx.currentTime;
-    // กันเสียงซ้ำถี่เกินไป (ตีรัว ๆ แล้วเสียงแตก)
     if (this.lastSfx[name] && now - this.lastSfx[name] < 0.035) return;
     this.lastSfx[name] = now;
     const b = this.sfxBus;
@@ -151,6 +148,8 @@ export const Audio = {
         this._noise(now, { dur: 0.07, vol: 0.07, f0: 900, f1: 2600, q: 0.8, bus: b }); break;
       case 'hurt':
         this._tone(now, { type: 'sawtooth', f0: 220, f1: 90, dur: 0.16, vol: 0.20, bus: b }); break;
+      case 'heal':
+        [67, 71, 74, 79].forEach((n, i) => this._tone(now, { type: 'triangle', f0: hz(n), dur: 0.14, vol: 0.12, bus: b, delay: i * 0.045 })); break;
       case 'loot':
         this._tone(now, { type: 'square', f0: hz(76), dur: 0.055, vol: 0.12, bus: b });
         this._tone(now, { type: 'square', f0: hz(83), dur: 0.08, vol: 0.12, bus: b, delay: 0.055 }); break;
@@ -200,7 +199,6 @@ export const Audio = {
 
   /* ─────────────── เพลงประกอบ (chiptune sequencer) ─────────────── */
   tracks: {
-    // หมู่บ้าน: สงบ ช้า ไม่กดดัน
     village: {
       bpm: 92, swing: 0,
       prog: [['A', 3, 'm'], ['F', 3, 'M'], ['C', 4, 'M'], ['G', 3, 'M']],
@@ -210,7 +208,6 @@ export const Audio = {
       lead: [null, null, 76, null, null, 74, null, null, null, null, 72, null, null, 69, null, null,
         null, null, 74, null, null, 72, null, null, null, null, 69, null, null, 67, null, null],
     },
-    // ทุ่งนา: คึกคัก
     field: {
       bpm: 124, swing: 0,
       prog: [['A', 3, 'm'], ['F', 3, 'M'], ['C', 4, 'M'], ['G', 3, 'M']],
@@ -220,7 +217,6 @@ export const Audio = {
       lead: [81, null, null, 79, null, 76, null, null, 79, null, null, 76, null, 74, null, null,
         null, 76, null, 79, null, 81, null, null, 84, null, 81, null, 79, null, 76, null],
     },
-    // บอส: ตึงเครียด
     boss: {
       bpm: 148, swing: 0,
       prog: [['A', 2, 'm'], ['A', 2, 'm'], ['G', 2, 'M'], ['F', 2, 'M']],
@@ -230,7 +226,6 @@ export const Audio = {
       lead: [69, null, 69, null, 70, null, 69, null, 67, null, 69, null, 65, null, 67, null,
         null, 69, null, 70, null, 72, null, 74, null, 72, null, 70, null, 69, null],
     },
-    // ดินแดนมาร์: ช้า กดดัน เสียงกดลด (dim chords + drone)
     hell: {
       bpm: 96, swing: 0,
       prog: [['D', 2, 'dim'], ['D', 2, 'dim'], ['E', 2, 'dim'], ['D', 2, 'm']],
@@ -239,6 +234,16 @@ export const Audio = {
       drums: 'k...s...k.h.s...',
       lead: [74, null, null, null, 72, null, 73, null, null, null, 69, null, null, null, 70, null,
         74, null, null, null, 72, null, 69, null, null, null, null, null, 67, null, 66, null],
+    },
+    // แดนเซิร์ฟเถื่อน (โซน 3): Synthwave Chiptune จังหวะตื๊ดไซเบอร์
+    cyber: {
+      bpm: 136, swing: 0,
+      prog: [['E', 3, 'm'], ['C', 3, 'M'], ['D', 3, 'M'], ['B', 2, 'm']],
+      bassOct: -2, arpOct: 1, leadOct: 1,
+      arpPat: [0, 1, 2, 0],
+      drums: 'k.h.s.h.k.k.s.hh',
+      lead: [76, null, 79, null, 83, null, 79, null, 76, null, 74, null, 72, null, 74, null,
+        76, null, 79, null, 84, null, 83, null, 79, null, 76, null, 74, null, 71, null],
     },
   },
 
@@ -249,7 +254,7 @@ export const Audio = {
     this.stopMusic(true);
     this.trackName = name;
     this.track = t;
-    this.stepDur = (60 / t.bpm) / 4;      // หนึ่งขั้น = โน้ตเขบ็ตหนึ่งชั้น
+    this.stepDur = (60 / t.bpm) / 4;
     this.step = 0;
     this.nextTime = this.ctx.currentTime + 0.08;
     this.timer = setInterval(() => this._scheduler(), 25);
@@ -280,21 +285,17 @@ export const Audio = {
     const tones = chordTones(root, type);
     const b = this.musicBus;
 
-    // เบส — ทุกครึ่งจังหวะ
     if (s % 4 === 0) {
       this._tone(t, { type: 'triangle', f0: hz(root + tr.bassOct * 12), dur: this.stepDur * 3.1, vol: 0.16, bus: b });
     } else if (s % 4 === 2) {
       this._tone(t, { type: 'triangle', f0: hz(root + tr.bassOct * 12), dur: this.stepDur * 0.9, vol: 0.08, bus: b });
     }
-    // อาร์เพจจิโอ — ทุกขั้น
     const tone = tones[tr.arpPat[s % tr.arpPat.length] % tones.length];
     this._tone(t, { type: 'square', f0: hz(tone + tr.arpOct * 12), dur: this.stepDur * 0.8, vol: 0.045, bus: b });
-    // ทำนอง
     const n = tr.lead[(s + bar * 16) % tr.lead.length];
     if (n !== null && n !== undefined) {
       this._tone(t, { type: 'square', f0: hz(n + tr.leadOct * 12), dur: this.stepDur * 2.4, vol: 0.075, bus: b });
     }
-    // กลอง
     const d = tr.drums[s % 16];
     if (d === 'k') {
       this._tone(t, { type: 'sine', f0: 140, f1: 46, dur: 0.11, vol: 0.20, bus: b });

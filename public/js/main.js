@@ -3,19 +3,23 @@
    ลูปเป็น fixed timestep 60Hz + interpolate การวาด
    ═══════════════════════════════════════════════════════════ */
 
-import { CONFIG, CLASSES, ITEMS, CHAT_REPLIES, AUTO_CHAT, BOT_NAMES, NPCS, RESPAWN_LINES, CHEST_LOOT, CAPTURE, PET_SPECIES, SKILLS, ADVANCED, QUESTS } from './data.js';
+import {
+  CONFIG, CLASSES, ITEMS, CHAT_REPLIES, AUTO_CHAT, BOT_NAMES, NPCS,
+  RESPAWN_LINES, CHEST_LOOT, SKILLS, QUESTS,
+} from './data.js';
 import { buildSprites, SPR } from './sprites.js';
 import { World, SPRITE_OF_TILE, T, HURT_TILES } from './world.js';
-import { createFinder, lineClear } from './pathfind.js';
+import { createFinder } from './pathfind.js';
 import {
   createPlayer, createNpc, makeBots, recalcPlayer, addItem, removeItem, countItem,
   updatePlayer, updateMonsters, updateNpcs, updateBots, updateDrops, updateEffects,
   playerAttack, useSkill, checkLevelUp, applyDeathPenalty, upgradeEquipped, killMonster,
-  addFloater, nearestMonster, ATTACK_RANGE, advanceClass, playerSkills,
+  addFloater, nearestMonster, ATTACK_RANGE, advanceClass,
+  craftProtectCharm, togglePartyBot, applyGuildBuff, startTowerFloor, playerAura, hitBot,
 } from './entities.js';
 import {
-  updatePets, attemptCapture, finishCapture, activePet, setActivePet, releasePet,
-  renamePet, usePetPotion, onMonsterKilled, PET_MAX, hydratePets,
+  updatePets, attemptCapture, finishCapture,
+  usePetPotion, onMonsterKilled, hydratePets,
 } from './pets.js';
 import { UI } from './ui.js';
 import {
@@ -41,11 +45,13 @@ const state = {
   mapId: 'field',
   monsters: [], npcs: [], bots: [], drops: [], effects: [], floaters: [],
   pets: [],
-  targetMonster: null,       // เป้าที่คลิกเลือกไว้
-  capture: null,             // สถานะการจับสัตว์เลี้ยง (อนิเมชันดิ้น)
+  targetMonster: null,
+  capture: null,
   chestToast: null,
   chat: [],
   boss: { active: false, nextAt: CONFIG.BOSS_FIRST, entity: null },
+  tower: { active: false, floor: 0, total: 0 },
+  pvpMode: false,
   chatT: 2, spawnT: 1, replyT: null, achT: 1,
   onlineCount: 1247, ping: 12, zoneName: 'หมู่บ้านโนบอดี้', bossText: '--:--',
   inputLocked: false, paused: false, pendingClass: null,
@@ -65,9 +71,8 @@ let acc = 0;
 let uidSeq = 0;
 const FIXED = 1 / 60;
 let vignette = null;
-const renderList = [];        // ใช้ซ้ำทุกเฟรม ไม่สร้างอาเรย์ใหม่
+const renderList = [];
 
-/** เทมเพลต glow สีอุ่น — สร้างครั้งเดียวแล้วใช้ซ้ำ (สร้าง radial gradient ต่อเฟรมแพง) */
 function makeGlow(r, g, b, size, peak) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -80,13 +85,12 @@ function makeGlow(r, g, b, size, peak) {
   g2.fillRect(0, 0, size, size);
   return c;
 }
-const GLOW_LAMP = makeGlow(255, 196, 110, 96, 0.5);    // ตะเกียง
-const GLOW_WIN = makeGlow(255, 214, 150, 64, 0.35);    // หน้าต่างบ้าน
+const GLOW_LAMP = makeGlow(255, 196, 110, 96, 0.5);
+const GLOW_WIN = makeGlow(255, 214, 150, 64, 0.35);
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 
-/* ───────────── ตรวจอุปกรณ์แบบแตะ (ต้องคำนวณก่อน resize ครั้งแรก) ───────────── */
 function setupTouch() {
   const mode = Settings.get('touchControls');
   const has = 'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0;
@@ -98,19 +102,15 @@ function setupTouch() {
 }
 const TOUCH_ON = setupTouch();
 
-/* ───────────── ปรับขนาดจอ ───────────── */
 function resize() {
   const stage = document.getElementById('stage');
   const sw = stage.clientWidth || window.innerWidth;
   const sh = stage.clientHeight || window.innerHeight;
-  // เต็มControls: ขยายให้คลุมทั้งControls (cover) — เลิกมีขอบดำล้อมControls
-  // เกมภายในยังเป็น 480×270 เหมือนเดิม แค่สเกล CSS ที่แตกต่าง
   const scale = Math.max(sw / CONFIG.VIEW_W, sh / CONFIG.VIEW_H);
   view.scale = scale;
   view.w = sw; view.h = sh;
   cv.style.width = (CONFIG.VIEW_W * scale) + 'px';
   cv.style.height = (CONFIG.VIEW_H * scale) + 'px';
-  // canvas 3D ขนาดเท่าคานวาส 2D (เรนเดอร์วัตถุ/แสง)
   const c3 = document.getElementById('world-3d');
   if (c3) {
     c3.style.width = (CONFIG.VIEW_W * scale) + 'px';
@@ -122,11 +122,9 @@ function resize() {
   view.ox = r.left - sr.left;
   view.oy = r.top - sr.top;
 
-  // เตือนบนมือถือแนวตั้ง: หมุนจอแล้วเล่นดึกขึ้น
   const portrait = sh > sw * 1.1;
   document.body.classList.toggle('touch-portrait', TOUCH_ON && portrait);
 
-  // vignette ต้องสร้างใหม่เมื่อขนาดเปลี่ยน
   vignette = wg.createRadialGradient(
     CONFIG.VIEW_W / 2, CONFIG.VIEW_H / 2, CONFIG.VIEW_H * 0.34,
     CONFIG.VIEW_W / 2, CONFIG.VIEW_H / 2, CONFIG.VIEW_W * 0.72,
@@ -155,7 +153,6 @@ function step(dt) {
   updateAmbient(state, dt);
   updatePortals(state, dt);
   updateHazards(state, dt);
-  // สถิติ: เวลาเล่นเอง vs ปล่อยให้ auto เล่น (ใช้กับความสำเร็จล้อเลียน)
   state.autoOn = Auto.on;
   if (!Auto.on && state.player && !state.player.dead) {
     state.player.ctr.manualTime = (state.player.ctr.manualTime || 0) + dt;
@@ -167,6 +164,7 @@ function step(dt) {
   updateCapture(state, dt);
   updateDrops(state, dt);
   updateEffects(state, dt);
+  Particles.update(dt);        // แก้บั๊ก v0.9.0: ต้องอัปเดตฟิสิกส์และอายุขัยของอนุภาคทุกเฟรม
   VFX.update(dt);
   updateQuests(state, dt);
   tickSpawn(state, dt);
@@ -174,7 +172,6 @@ function step(dt) {
   tickChat(state, dt);
   updateLandmarks(state, dt);
 
-  // ค่าที่แสดงใน HUD
   state._hudT = (state._hudT || 0) - dt;
   if (state._hudT <= 0) {
     state._hudT = 0.5;
@@ -183,13 +180,12 @@ function step(dt) {
     const zone = state.world.zoneNameAt(state.player.x, state.player.y);
     if (zone !== state.zoneName) {
       state.zoneName = zone;
-      UI.zoneBanner(zone);            // แบนเนอร์บอกเมื่อเข้าโซนใหม่
+      UI.zoneBanner(zone);
     }
     state.bossText = bossTimerText(state);
     updateMusic();
   }
 
-  // ความสำเร็จ
   state.achT -= dt;
   if (state.achT <= 0) {
     state.achT = 1.2;
@@ -197,7 +193,6 @@ function step(dt) {
     for (const a of fresh) state.onAchievement?.(a);
   }
 
-  // ปรับคุณภาพเอง: เฟรมตกต่อเนื่อง 4 วินาที → ลด particle (กันเครื่องอ่อนเล่นไม่ไหว)
   if (Settings.get('autoQuality') && Perf.fps > 0) {
     state._aqLo = Perf.fps < 45 ? (state._aqLo || 0) + dt : 0;
     if (state._aqLo > 4 && Particles.quality === 'high') {
@@ -205,18 +200,16 @@ function step(dt) {
       UI.toast('เครื่องหนัก — ลดคุณภาพเอฟเฟกต์อัตโนมัติ (ปิดได้ที่ตั้งค่า)', 'bad');
       state._aqLo = 0;
     }
-    // 3D เป็นตัว heavyสุด — ถ้าเฟรมไม่ถึง 70 นาน 4 วินาที ปิด 3D (กลับ 2D)
     state._aqLo2 = Perf.fps < 70 && GFX3D.ok ? (state._aqLo2 || 0) + dt : 0;
     if (state._aqLo2 > 4 && GFX3D.ok) {
       GFX3D.ok = false;
       GFX3D.reason = 'off';
-      UI.toast('เครื่อง/การ์ดจอรัน 3D ไม่ทัน — กลboundsไป 2D (เปิดบังคับได้ที่ตั้งค่า)', 'bad');
+      UI.toast('เครื่อง/การ์ดจอรัน 3D ไม่ทัน — สลับไป 2D (เปิดบังคับได้ที่ตั้งค่า)', 'bad');
       state._aqLo2 = 0;
       resize();
     }
   }
 
-  // ตอบกลับแชท
   if (state.replyT !== null) {
     state.replyT -= dt;
     if (state.replyT <= 0) {
@@ -226,7 +219,6 @@ function step(dt) {
     }
   }
 
-  // เซฟอัตโนมัติ
   if (Settings.get('autoSave')) {
     state._saveT = (state._saveT || 0) + dt;
     if (state._saveT > 25) { state._saveT = 0; saveGame(state); }
@@ -242,11 +234,9 @@ function render(alpha, frameDt) {
   const world = state.world;
   const is3D = GFX3D.ok;
 
-  // ตำแหน่งผู้เล่นแบบ interpolate → การเคลื่อนที่นุ่มแม้เฟรมไม่ตรงกับลอจิก
   const px = lerp(p.prevX, p.x, alpha);
   const py = lerp(p.prevY, p.y, alpha);
 
-  // กล้อง 2D (ใช้ทั้งโหมด 2D และ fallback)
   const maxX = world.w * TS - CONFIG.VIEW_W;
   const maxY = world.h * TS - CONFIG.VIEW_H;
   const tcx = clamp(px - CONFIG.VIEW_W / 2 + p.dir * 12, 0, maxX);
@@ -256,38 +246,39 @@ function render(alpha, frameDt) {
   const cy = clamp(Math.round(Camera.y + Camera.oy), 0, maxY);
   view.camX = cx; view.camY = cy;
   state._dnDark = DayNight.enabled ? DayNight.darkness() : 0;
-  // projector สำหรับ DOM overlay (nametag/floaters) — 3D เท่านั้น
   view.project = (GFX3D.ok && GFX3D.project) ? GFX3D.project.bind(GFX3D) : null;
 
-  // ── โหมด 3D (three.js): โลก/เอนทิตี/แสง/particle ──
   if (is3D) {
     GFX3D.flash = 0;
     for (const f of VFX.flashes) GFX3D.flash = Math.max(GFX3D.flash, f.a0 * (1 - f.t / f.dur));
     const list = [];
     for (const n of state.npcs) list.push({ sprId: n.sprite, x: n.x, y: n.y, frame: n.frame });
-    for (const b of state.bots) list.push({ sprId: 'hero_' + CLASSES[(b._c || 0) % CLASSES.length].id, x: b.x, y: b.y, frame: b.frame });
+    for (const b of state.bots) {
+      if (b.koT > 0) continue;
+      list.push({ sprId: 'hero_' + CLASSES[(b._c || 0) % CLASSES.length].id, x: b.x, y: b.y, frame: b.frame, flip: b.dir < 0 });
+    }
     for (const m of state.monsters) if (!m.dead) list.push({ sprId: m.def.sprite, x: m.x, y: m.y, frame: m.frame, headUp: m.boss ? 8 : 0, shadowR: m.boss ? 26 : 0 });
     for (const pt of state.pets) list.push({ sprId: pt.speciesId, x: pt.x, y: pt.y, frame: pt.frame, flip: pt.dir < 0 });
     for (const d of state.drops) list.push({ sprId: d.id === 'gem' ? 'drop_gem' : 'drop_bag', x: d.x, y: d.y, frame: Math.floor(state.time * 3) % 2 });
     list.push({ sprId: 'hero_' + p.clsId, x: px, y: py, frame: p.frame, flip: p.dir < 0, headUp: 0 });
     GFX3D.render(state, alpha, frameDt, list);
-    // 3D ถูกปิดกลางเกม (ช้า) → เตียบผู้เล่น + กลับ 2D
     if (!GFX3D.ok && GFX3D.reason === 'slow-gl') {
-      UI.toast('เครื่อง/การ์ดจอรัน 3D ไม่ทัน — กลboundsไป 2D (เปิดบังคับได้ที่ตั้งค่า)', 'bad');
+      UI.toast('เครื่อง/การ์ดจอรัน 3D ไม่ทัน — สลับไป 2D (เปิดบังคับได้ที่ตั้งค่า)', 'bad');
       GFX3D.reason = 'off';
       resize();
     }
   }
 
-  // ── ชั้น 2D ──
-  // 3D: โปร่งใส (พื้น/เอนทิตี/particle อยู่ใน WebGL) — เหลือแค่ overlay เอฟเฟกต์
-  // 2D: วาดถือของขึ้นมาทั้งหมดเหมือนเดิม
   wg.imageSmoothingEnabled = false;
   wg.clearRect(0, 0, CONFIG.VIEW_W, CONFIG.VIEW_H);
 
-  // ตัวแปลง world → css px (3D: ผ่านการโปรเจกชนจุด perspective)
+  // ตัวแปลง world → พิกัดแคนวาส 480×270 (ในโหมด 3D ต้องหารด้วย view.scale)
   const W2S = (wx, wy, headUp = 0) => {
-    if (is3D) return GFX3D.project(wx, wy, headUp);
+    if (is3D) {
+      const pr = GFX3D.project(wx, wy, headUp);
+      const sc = view.scale || 1;
+      return { sx: Math.round(pr.sx / sc), sy: Math.round(pr.sy / sc) };
+    }
     return { sx: Math.round(wx - cx), sy: Math.round(wy - cy) };
   };
   const sx = (wx) => W2S(wx, 0).sx;
@@ -325,7 +316,20 @@ function render(alpha, frameDt) {
     wg.restore();
   }
 
-  /* ── วงเตือนท่าของบอส ( overlay — ใช้ projection) ── */
+  /* ── วงออร่าอุปกรณ์ตีบวก (+5 / +7 / +9 / +10) ── */
+  const aura = playerAura(p);
+  if (aura) {
+    const ap = W2S(px, py, 1);
+    const pulse = 0.75 + 0.25 * Math.sin(state.time * 6);
+    wg.save();
+    wg.globalAlpha = 0.55 * pulse;
+    wg.strokeStyle = aura.color;
+    wg.lineWidth = 1.5;
+    wg.beginPath(); wg.ellipse(ap.sx, ap.sy - 1, 10 * pulse, 4.5 * pulse, 0, 0, Math.PI * 2); wg.stroke();
+    wg.restore();
+  }
+
+  /* ── วงเตือนท่าของบอส ── */
   const boss = state.boss.entity;
   if (boss && !boss.dead && boss.abil) {
     const a = boss.abil;
@@ -358,7 +362,7 @@ function render(alpha, frameDt) {
     }
   }
 
-  /* ── เงา + ตัวละคร (โหมด 2D เฉพาะ — 3D มีเงาจริง + billboard) ── */
+  /* ── เงา + ตัวละคร (โหมด 2D เฉพาะ) ── */
   if (!is3D) {
     const list = renderList;
     list.length = 0;
@@ -366,7 +370,7 @@ function render(alpha, frameDt) {
     const inView = (x, y) => x >= cx - viewPad && x <= cx + CONFIG.VIEW_W + viewPad
       && y >= cy - viewPad && y <= cy + CONFIG.VIEW_H + viewPad;
     for (const n of state.npcs) if (inView(n.x, n.y)) list.push({ y: n.y, kind: 'npc', e: n });
-    for (const b of state.bots) if (inView(b.x, b.y)) list.push({ y: b.y, kind: 'bot', e: b });
+    for (const b of state.bots) if (b.koT <= 0 && inView(b.x, b.y)) list.push({ y: b.y, kind: 'bot', e: b });
     for (const m of state.monsters) if (!m.dead && inView(m.x, m.y)) list.push({ y: m.y, kind: 'mon', e: m });
     for (const pt of state.pets) if (inView(pt.x, pt.y)) list.push({ y: pt.y, kind: 'pet', e: pt });
     if (inView(px, py)) list.push({ y: py, kind: 'me', e: p });
@@ -383,7 +387,6 @@ function render(alpha, frameDt) {
       wg.fill();
     }
 
-    // ของบนพื้น
     for (const d of state.drops) {
       const spr = SPR[d.id === 'gem' ? 'drop_gem' : 'drop_bag'];
       const bob = Math.sin(d.bob) * 1.5;
@@ -489,10 +492,10 @@ function render(alpha, frameDt) {
     wg.restore();
   }
 
-  /* ── เอฟเฟกต์สกิล (overlay — ใช้ projection ในโหมด 3D) ── */
+  /* ── เอฟเฟกต์สกิล ── */
   VFX.draw(wg, cx, cy, is3D ? W2S : null);
 
-  /* ── particle (2D เฉพาะ — 3D มี particle เอง) ── */
+  /* ── particle (2D เฉพาะ) ── */
   if (!is3D) Particles.draw(wg, cx, cy);
 
   /* ── เอฟเฟกต์เชิงรูปทรง ── */
@@ -536,7 +539,7 @@ function render(alpha, frameDt) {
     }
   }
 
-  /* ── แสงกลางวัน-กลางคืน + ขอบมืด (2D เท่านั้น — 3D จัดการใน shader/light) ── */
+  /* ── แสงกลางวัน-กลางคืน + ขอบมืด (2D เท่านั้น) ── */
   DayNight.update(frameDt);
   if (!is3D) {
     const tint = DayNight.tint();
@@ -554,14 +557,14 @@ function render(alpha, frameDt) {
       wg.fillRect(0, 0, CONFIG.VIEW_W, CONFIG.VIEW_H);
       wg.restore();
     }
-    if (state._dnDark > 0.06) {
+    if (state._dnDark > 0.06 || world.cyber) {
       const spots = world.lightSpots;
       for (let i = 0; i < spots.length; i += 3) {
         const dxp = spots[i] - cx, dyp = spots[i + 1] - cy;
         const rad = spots[i + 2] === 1 ? 46 : 26;
         if (dxp < -rad || dyp < -rad || dxp > CONFIG.VIEW_W + rad || dyp > CONFIG.VIEW_H + rad) continue;
         const fl = 0.88 + 0.12 * Math.sin(state.time * 6.3 + spots[i] * 0.35 + spots[i + 1] * 0.21);
-        const a = state._dnDark * spots[i + 2] * fl;
+        const a = Math.max(world.cyber ? 0.45 : 0, state._dnDark) * spots[i + 2] * fl;
         const glow = spots[i + 2] === 1 ? GLOW_LAMP : GLOW_WIN;
         wg.save();
         wg.globalCompositeOperation = 'lighter';
@@ -573,13 +576,12 @@ function render(alpha, frameDt) {
     if (state._ambient > 0) Particles.drawGlow(wg, cx, cy);
   }
 
-  /* ── แฟลชเต็มจอจากสกิล ── */
   VFX.drawOverlay(wg, CONFIG.VIEW_W, CONFIG.VIEW_H);
 
   /* ── แถบเลือดบอส ── */
   if (boss && !boss.dead) {
-    const bw = 84, bx = sx(lerp(boss.prevX, boss.x, alpha)) - bw / 2;
-    const by = sy(lerp(boss.prevY, boss.y, alpha)) - 36;
+    const bp = W2S(lerp(boss.prevX, boss.x, alpha), lerp(boss.prevY, boss.y, alpha), 36);
+    const bw = 84, bx = bp.sx - bw / 2, by = bp.sy;
     wg.fillStyle = 'rgba(0,0,0,.78)';
     wg.fillRect(bx - 1, by - 1, bw + 2, 8);
     wg.fillStyle = boss.phase2 ? '#ff3b3b' : '#ff5f5f';
@@ -589,7 +591,6 @@ function render(alpha, frameDt) {
     wg.fillText(boss.phase2 ? 'บอสโลก เฟส 2' : 'บอสโลก', bx, by - 3);
   }
 }
-
 
 /* ═══════════════════════════════════════════════════════════
    ส่วนที่ 3 — ลูปหลัก + ตัวกันพัง
@@ -607,7 +608,6 @@ function frame(ts) {
   if (state.screen !== 'play' || !state.player) return;
 
   try {
-    // หยุดชั่วคราว: หยุดลอจิกทั้งหมด แต่ยังวาดภาพค้างไว้ (ไม่ให้หน้าจอดำ)
     if (state.paused) {
       acc = 0;
       render(0, frameDt);
@@ -616,12 +616,11 @@ function frame(ts) {
       return;
     }
 
-    // hit-stop: แช่เวลาเสี้ยววินาทีตอนตีแรง
     const dt = HitStop.consume(frameDt);
     acc += dt;
     let steps = 0;
     while (acc >= FIXED && steps < 5) { step(FIXED); acc -= FIXED; steps++; }
-    if (steps >= 5) acc = 0;             // ตามไม่ทัน → ทิ้งเวลาที่ค้าง ไม่ให้จอม้า
+    if (steps >= 5) acc = 0;
     const alpha = Math.min(1, acc / FIXED);
 
     render(alpha, frameDt);
@@ -638,9 +637,7 @@ function onLoopError(err) {
   const now = performance.now();
   errorWindow = errorWindow.filter((t) => now - t < 3000);
   errorWindow.push(now);
-  // เขียนลง console ครั้งแรก ๆ เท่านั้น กันสแปม
   if (state.errors <= 3) console.error('[GRIAN] ข้อผิดพลาดในลูป:', err);
-  // ถ้าพังถี่เกินไป ให้หยุดและบอกผู้ใช้ แทนที่จะปล่อยจอขาวเงียบ ๆ
   if (errorWindow.length > 40) {
     state.screen = 'error';
     UI.showFatal(err, () => {
@@ -685,13 +682,23 @@ function canvasToWorld(clientX, clientY) {
   };
 }
 
-/** หามอนที่อยู่ใต้จุดคลิก (ยอมรับรัศมีเล็กน้อย เพื่อให้คลิกง่าย) */
 function monsterAt(wx, wy) {
   let best = null, bd = 15 * 15;
   for (const m of state.monsters) {
     if (m.dead) continue;
     const d = (m.x - wx) ** 2 + (m.y - wy - 8) ** 2;
     if (d < bd) { bd = d; best = m; }
+  }
+  return best;
+}
+
+function botAt(wx, wy) {
+  if (!state.pvpMode) return null;
+  let best = null, bd = 16 * 16;
+  for (const b of state.bots) {
+    if (b.afk || b.inParty || b.koT > 0) continue;
+    const d = (b.x - wx) ** 2 + (b.y - wy - 8) ** 2;
+    if (d < bd) { bd = d; best = b; }
   }
   return best;
 }
@@ -709,6 +716,19 @@ function orderMove(clientX, clientY) {
     if (path) { p.path = path; p.pathIdx = 0; }
     return;
   }
+
+  const b = botAt(w.x, w.y);
+  if (b) {
+    b.hostile = true;
+    const path = finder.find(p.x, p.y, b.x, b.y);
+    if (path) { p.path = path; p.pathIdx = 0; }
+    if (Math.hypot(b.x - p.x, b.y - p.y) <= ATTACK_RANGE + 12 && p.attackCd <= 0) {
+      p.attackCd = 0.42;
+      hitBot(state, b, p.atk, p.luck, 1);
+    }
+    return;
+  }
+
   state.targetMonster = null;
   UI.setTarget(null);
   const path = finder.find(p.x, p.y, w.x, w.y);
@@ -720,7 +740,6 @@ function orderMove(clientX, clientY) {
   }
 }
 
-/** เดินเข้าหาเป้าที่คลิกไว้ แล้วตีอัตโนมัติเมื่ออยู่ในระยะ */
 function updateChase(state, dt) {
   const p = state.player;
   const m = state.targetMonster;
@@ -745,20 +764,15 @@ function updateChase(state, dt) {
   }
 }
 
-/* ───────────── บรรยากาศ: หิ่งห้อยกลางคืน · ละออง pollen กลางวัน ─────────────
-   ต้นทุนต่ำมาก (ใช้อีกpool เดิม) แต่ทั้งแผนถึงมีชีวิต —
-   เดิมโลกไม่มีอะไรขยับนอกจากการต่อสู้ */
 function updateAmbient(state, dt) {
   state._ambT = (state._ambT || 0) - dt;
   if (state._ambT > 0) return;
-  // กลางวันละอองต้องเบา ๆ (ไม่รบกวนการเล่น) — กลางคืนหิ่งหอยได้หนาแน่นกว่า
   state._ambT = DayNight.enabled && DayNight.darkness() > 0.15 ? 0.55 : 0.9;
   const p = state.player, world = state.world;
   if (!p || !world) return;
   const dark = DayNight.enabled ? DayNight.darkness() : 0;
   state._ambient = dark;
-  if (dark < 0.15) {
-    // กลางวัน: ละอองฤดูกาลลอยอยู่เบา ๆ (บางโซนจะหนาแน่นกว่า)
+  if (dark < 0.15 && !world.cyber) {
     const region = world.regionAt(p.x, p.y);
     const dense = (region === 'tallgrass' || region === 'village') ? 2 : 1;
     for (let i = 0; i < dense; i++) {
@@ -768,22 +782,22 @@ function updateAmbient(state, dt) {
     }
     return;
   }
-  // กลางคืน: หิ่งห้อยกระพริบ (เขตสุสาน/ถ้ำ/แดนมาร์ หนาแน่นกว่าทุ่งโล่ง)
   const region = world.regionAt(p.x, p.y);
-  const dense = (region === 'graveyard' || region === 'cave' || region === 'hellfield') ? 3 : 2;
+  const dense = (region === 'graveyard' || region === 'cave' || region === 'hellfield' || world.cyber) ? 3 : 2;
   for (let i = 0; i < dense; i++) {
     const a = Math.random() * Math.PI * 2, r = 30 + Math.random() * 210;
     const x = p.x + Math.cos(a) * r, y = p.y + Math.sin(a) * r;
     if (!world.solidAtPx(x, y)) {
-      Particles.spawn('firefly', x, y, { count: 1, c: region === 'graveyard' ? '#a8ffd8' : '#c8ff9a' });
+      const col = world.cyber ? '#4ae8ff' : (region === 'graveyard' ? '#a8ffd8' : '#c8ff9a');
+      Particles.spawn('firefly', x, y, { count: 1, c: col });
     }
   }
 }
 
-/* ───────────── เดินทางข้ามแมพ (ประตู) + อันตรายของดินแดนมาร์ (ลาว) ───────────── */
-let travelFx = null;          // ป้องกันยิงซ้ำทันทีที่ถึง
+/* ───────────── เดินทางข้ามแมพ (3 โซน) + อันตรายของโซน 2/3 ───────────── */
+let travelFx = null;
 
-function updatePortals(state, dt) {
+function updatePortals(state) {
   const p = state.player, world = state.world;
   if (!p || !world || !world.portals.length || state.paused || state.inputLocked) return;
   if (travelFx && state.time - travelFx < 1.2) return;
@@ -796,21 +810,22 @@ function updatePortals(state, dt) {
   }
 }
 
-/** สร้างโลกใหม่ทั้งใบ — ผู้เล่น เดินทางด้วย แต่ความคืบหน้าอยู่กับตัวละคร */
 function travelTo(mapId) {
   const p = state.player;
-  const hell = mapId === 'hell';
   if (!p) return;
-  state.mapId = mapId;
-  state.world = new World({ hell });
+  const targetMap = (mapId === 'hell' || mapId === 'cyber') ? mapId : 'field';
+  const hell = targetMap === 'hell';
+  const cyber = targetMap === 'cyber';
+  state.mapId = targetMap;
+  state.world = new World({ hell, cyber, mapId: targetMap });
   finder = createFinder(state.world);
   Auto.attach({ finder, world: state.world });
   AutoQ.attach(finder);
   if (GFX3D.ok) GFX3D.remap(state.world);
 
-  // วางผู้เล่นฝ่ายตรงข้าม: จากหมู่บ้าน → ดอนกลางแดนมาร์ / จากแดนมาร์ → ริมประตูฝั่งแมพแรก
-  if (hell) {
+  if (hell || cyber) {
     p.x = state.world.spawn.x; p.y = state.world.spawn.y;
+    if (cyber) p.ctr.visitedCyber = (p.ctr.visitedCyber || 0) + 1;
   } else {
     const z = state.world.portals[0];
     p.x = z ? z.x + 28 : state.world.spawn.x;
@@ -822,11 +837,13 @@ function travelTo(mapId) {
   state.npcs = state.world.npcSpots.map((s) => createNpc(s.id, s.x, s.y));
   state.bots = makeBots(state.world);
   state.bots.forEach((b, i) => { b._uid = ++uidSeq; b._c = i; });
+  p.partyCount = 0;
   state.monsters = [];
   initialMonsters(state);
 
   state.drops = []; state.effects = []; state.floaters = [];
   state.targetMonster = null; state.moveMarker = null; state.capture = null;
+  state.tower = { active: false, floor: 0, total: 0 };
   state._signSeen = new Set();
   state.boss = { active: false, nextAt: CONFIG.BOSS_FIRST, entity: null };
   VFX.clear();
@@ -834,46 +851,52 @@ function travelTo(mapId) {
   Camera.snap(p.x - CONFIG.VIEW_W / 2, p.y - CONFIG.VIEW_H / 2);
   state.zoneName = state.world.zoneNameAt(p.x, p.y);
   UI.setTarget(null);
-  Particles.spawn('burst', p.x, p.y - 8, { count: 22, c: hell ? '#b98bff' : '#7fe0ff' });
-  Audio.play(hell ? 'boss' : 'rare');
-  UI.zoneBanner(hell ? 'ดินแดนมาร์' : 'หมู่บ้านโนบอดี้');
-  if (hell) {
+  const burstCol = cyber ? '#4ae8ff' : (hell ? '#b98bff' : '#7fe0ff');
+  Particles.spawn('burst', p.x, p.y - 8, { count: 22, c: burstCol });
+  Audio.play((hell || cyber) ? 'boss' : 'rare');
+  UI.zoneBanner(cyber ? 'แดนเซิร์ฟเถื่อน' : (hell ? 'ดินแดนมาร์' : 'หมู่บ้านโนบอดี้'));
+  if (cyber) {
+    sysMsg(state, 'คุณทะลุเข้าสู่ แดนเซิร์ฟเถื่อน (แมพ 3) — เสียงพัดลมการ์ดจอดังสนั่นหวั่นไหว!');
+    pushChat(state, 'world', BOT_NAMES[0], 'ยินดีต้อนรับสู่เซิร์ฟเถื่อนคูณร้อย ระวังบ่อบั๊กไฟดูดด้วย!');
+  } else if (hell) {
     sysMsg(state, 'คุณเดินลึกเข้าประตู... กลิ่นไหม้มาตั้งแต่ไกล เออ ตรงกับชื่อโซน');
     pushChat(state, 'world', BOT_NAMES[0], 'มีใครกล้ามาโซนใหม่ยัง');
   } else {
-    sysMsg(state, 'คุณผ่านประตูกลับมา หมอก ๆ หายไป เห็นสนามหญ้าอีกครั้ง');
+    sysMsg(state, 'คุณผ่านประตูกลับมา หมอกจางหายไป เห็นสนามหญ้าอีกครั้ง');
   }
   musicCtx = '';
   updateMusic();
 }
 
-/** ลาวเผา — ยืนทับแล้วโดนดาเมจซ้ำ ๆ (มีเอฟเฟกต์และตัวเลขเตือน) */
 function updateHazards(state, dt) {
   const p = state.player, world = state.world;
-  if (!p || p.dead || !world.hell) return;
+  if (!p || p.dead || (!world.hell && !world.cyber)) return;
   const tile = world.get(Math.floor(p.x / CONFIG.TILE), Math.floor(p.y / CONFIG.TILE));
   if (!HURT_TILES.has(tile)) { state._lavaT = 0; return; }
   state._lavaT = (state._lavaT || 0) - dt;
   if (state._lavaT > 0) return;
   state._lavaT = 0.5;
-  p.hp -= Math.ceil(CONFIG.LAVA_DPS * 0.5);
+  const isGlitch = tile === T.GLITCH;
+  const dmg = Math.ceil((isGlitch ? CONFIG.CYBER_DPS : CONFIG.LAVA_DPS) * 0.5);
+  p.hp -= dmg;
   p.hitFlash = 0.16;
-  Particles.spawn('spark', p.x, p.y - 4, { count: 3, c: '#ffb04d' });
-  addFloater(state, p.x, p.y - 28, `เผา! -${Math.ceil(CONFIG.LAVA_DPS * 0.5)}`, '#ff8f3c', 0.95);
+  Particles.spawn('spark', p.x, p.y - 4, { count: 3, c: isGlitch ? '#4ae8ff' : '#ffb04d' });
+  addFloater(state, p.x, p.y - 28, `${isGlitch ? 'ไฟดูด!' : 'เผา!'} -${dmg}`, isGlitch ? '#4ae8ff' : '#ff8f3c', 0.95);
   Audio.play('hurt');
   Camera.kick(2, 0.12);
   if (p.hp <= 0) {
     p.hp = 0; p.dead = true; p.deaths++;
     Particles.spawn('burst', p.x, p.y - 10, { count: 16, c: '#e04b4b' });
     Audio.play('die');
-    state.onPlayerDeath?.({ name: 'ลาวกลางดินแดนมาร์' });
+    state.onPlayerDeath?.({ name: isGlitch ? 'บ่อบั๊กไฟดูดแดนเซิร์ฟเถื่อน' : 'ลาวกลางดินแดนมาร์' });
   }
 }
 
-/* ───────────── การจับสัตว์เลี้ยง (อนิเมชันดิ้น 3 ครั้ง) ───────────── */function beginCapture(monster) {
+/* ───────────── การจับสัตว์เลี้ยง ───────────── */
+function beginCapture(monster) {
   const r = attemptCapture(state, monster);
   if (!r.ok) { UI.toast(r.msg, 'bad'); Audio.play('error'); return; }
-  monster.stun = 99;                       // แช่แข็งมอนระหว่างจับ
+  monster.stun = 99;
   state.capture = { result: r, t: 0, lastShake: -1, done: false };
   UI.updateHotbar(state);
 }
@@ -912,14 +935,12 @@ function updateCapture(state, dt) {
   if (c.t > shakeStart + r.shakes * per + 0.7) state.capture = null;
 }
 
-/* ───────────── หีบสมบัติ + ป้ายบอกทาง ───────────── */
 function updateLandmarks(state, dt) {
   const p = state.player;
   if (state.moveMarker) {
     state.moveMarker.t += dt;
     if (state.moveMarker.t > 0.7) state.moveMarker = null;
   }
-  // ป้ายบอกทาง — แจ้งครั้งเดียวต่อป้าย
   const sign = state.world.signNear(p.x, p.y);
   if (sign) {
     state._signSeen = state._signSeen || new Set();
@@ -938,8 +959,9 @@ function updateLandmarks(state, dt) {
 function openChest(chest) {
   const p = state.player;
   chest.opened = true;
-  state.world.set(chest.tx, chest.ty, T.GRASS);   // เปิดแล้วกลายเป็นพื้นหญ้า
-  state.world.repaintRegion(chest.tx - 1, chest.ty - 1, 3, 3);   // วาดพื้นใหม่ให้ตรงกับข้อมูล
+  const floorTile = state.world.cyber ? T.CYBERFLOOR : (state.world.hell ? T.ASH : T.GRASS);
+  state.world.set(chest.tx, chest.ty, floorTile);
+  state.world.repaintRegion(chest.tx - 1, chest.ty - 1, 3, 3);
   const loot = Math.random() < 0.5 ? CHEST_LOOT.common : CHEST_LOOT.rich;
   const gold = CHEST_LOOT.gold[Math.floor(Math.random() * CHEST_LOOT.gold.length)];
   p.gold += gold;
@@ -955,12 +977,12 @@ function openChest(chest) {
   sysMsg(state, `เปิดหีบสมบัติ ได้ ${gold} เงิน`);
 }
 
-/* ───────────── ดนตรีตามสถานการณ์ ───────────── */
 let musicCtx = '';
 function updateMusic() {
   if (!Audio.ready) return;
   let want = 'field';
   if (state.boss.active && state.boss.entity && !state.boss.entity.dead) want = 'boss';
+  else if (state.world && state.world.cyber) want = 'cyber';
   else if (state.world && state.world.hell) want = 'hell';
   else if (state.world && state.world.inVillage(state.player.x, state.player.y)) want = 'village';
   if (want !== musicCtx) { musicCtx = want; Audio.playMusic(want); }
@@ -969,17 +991,20 @@ function updateMusic() {
 /* ───────────── เริ่มเกม ───────────── */
 function startGame(player, saved, saveData = null) {
   state.player = player;
-  state.mapId = 'field';
-  state.world = new World();
+  const savedMap = saveData?.mapId || 'field';
+  state.mapId = (savedMap === 'hell' || savedMap === 'cyber') ? savedMap : 'field';
+  state.world = new World({ mapId: state.mapId, hell: state.mapId === 'hell', cyber: state.mapId === 'cyber' });
   finder = createFinder(state.world);
-  if (!player.x || !player.y) { player.x = state.world.spawn.x; player.y = state.world.spawn.y; }
+  if (!player.x || !player.y || state.world.solidAtPx(player.x, player.y)) {
+    player.x = state.world.spawn.x;
+    player.y = state.world.spawn.y;
+  }
   player.prevX = player.x; player.prevY = player.y;
   player.path = null; player.pathIdx = 0;
 
-  // ── ระบบภาพ/เสียง ต้องพร้อมก่อนสร้างเอนทิตี เพราะการเกิดมอนมีการเรียก particle ──
   Particles.init();
   Particles.quality = Settings.get('particles');
-  state._gfxParticles = Particles.pool;      // ให้ 3D layer อ่าน particle บรรยากาศ
+  state._gfxParticles = Particles.pool;
   if (Settings.get('render3d') !== 'off') GFX3D.init(state.world);
   Camera.enabled = Settings.get('shake') > 0;
   Camera.scale = Number(Settings.get('shake')) || 0;
@@ -997,7 +1022,6 @@ function startGame(player, saved, saveData = null) {
 
   state.drops = []; state.effects = []; state.floaters = [];
   state.pets = [];
-  // ── กู้คืนสิ่งที่บันทึกไว้: สัตว์เลี้ยง + หีบที่เปิดแล้ว ──
   if (saveData) {
     restoreWorld(state, saveData);
     if (Array.isArray(saveData.pets) && saveData.pets.length) {
@@ -1009,6 +1033,8 @@ function startGame(player, saved, saveData = null) {
   state.targetMonster = null;
   state.capture = null;
   state.moveMarker = null;
+  state.tower = { active: false, floor: 0, total: 0 };
+  state.pvpMode = false;
   state._signSeen = new Set();
   state._chaseT = 0;
   VFX.clear();
@@ -1039,7 +1065,7 @@ function startGame(player, saved, saveData = null) {
     pushChat(state, 'world', 'GM_ผู้ดูแล', 'ยินดีต้อนรับครับ อ่านประกาศหน้าล็อกอินด้วยนะครับ', 'gm');
     pushChat(state, 'world', BOT_NAMES[0], 'ใครมาใหม่เนี่ย ไปตีหนูกันไหม');
     pushChat(state, 'world', BOT_NAMES[1], 'ตีหนู 200 ตัว ยังไม่ได้หางเลย');
-    UI.toast('คลิกซ้ายที่พื้น = เดินไป · คลิกที่มอน = เข้าไปตี · กด P ดูสัตว์เลี้ยง', 'good');
+    UI.toast('คลิกซ้ายที่พื้น = เดินไป · คลิกที่มอน = เข้าไปตี · กด V เปิดปาร์ตี้/ประลอง/วาร์ป', 'good');
     UI.toast('WASD เดินเองได้ · E เปิดหีบ/คุย NPC · H ดูวิธีเล่นทั้งหมด', 'good');
   } else {
     sysMsg(state, `โหลดเซฟสำเร็จ — ยินดีต้อนรับกลับ ${player.name}`);
@@ -1051,7 +1077,6 @@ function startGame(player, saved, saveData = null) {
 /* ───────────── ตัวจัดการ UI ───────────── */
 const handlers = {
   onEnter() {
-    // ปุ่มนี้ = สร้างตัวละครใหม่เสมอ (การเล่นต่อใช้การ์ดในช่องเซฟ)
     state.pendingClass = null;
     UI.showScreen('create');
     UI.el['btn-start'].disabled = true;
@@ -1089,7 +1114,6 @@ const handlers = {
     if (!d || countItem(p, id) <= 0) { UI.toast('ไม่มีไอเทมนี้', 'bad'); return; }
     if (d.kind !== 'use') { UI.toast('ไอเทมนี้ใช้แบบนี้ไม่ได้', 'bad'); return; }
 
-    // ── ลูกแก้วจับมอน ──
     if (id === 'capture_ball') {
       if (state.capture) { UI.toast('กำลังจับตัวหนึ่งอยู่ รอให้เสร็จก่อน', 'bad'); return; }
       const m = (state.targetMonster && !state.targetMonster.dead)
@@ -1100,7 +1124,6 @@ const handlers = {
       return;
     }
 
-    // ── ยาฟื้นสัตว์เลี้ยง ──
     if (id === 'pet_potion') {
       const r = usePetPotion(state);
       if (!r.ok) { UI.toast(r.msg, 'bad'); Audio.play('error'); return; }
@@ -1110,16 +1133,25 @@ const handlers = {
       return;
     }
 
+    if (id === 'upgrade_stone' || id === 'protect_charm') {
+      UI.toast('ใช้ตอนตีบวกอุปกรณ์ในหน้าต่างกระเป๋า (I)', 'bad');
+      return;
+    }
+
     if (d.heal) { p.hp = Math.min(p.maxHp, p.hp + d.heal); UI.floatText(state, p.x, p.y - 22, `+${d.heal} HP`, '#5fe89b'); Particles.spawn('heal', p.x, p.y - 8, { count: 6 }); }
     if (d.healMp) { p.mp = Math.min(p.maxMp, p.mp + d.healMp); UI.floatText(state, p.x, p.y - 22, `+${d.healMp} MP`, '#6fbcff'); Particles.spawn('heal', p.x, p.y - 8, { count: 6, c: '#6fbcff' }); }
+    if (d.buffAtk) {
+      p.buffs = p.buffs.filter((b) => b.stat !== 'atk');
+      p.buffs.push({ stat: 'atk', mul: d.buffAtk, t: d.buffDur || 20, dur: d.buffDur || 20 });
+    }
+    if (d.buffSpd) {
+      p.buffs = p.buffs.filter((b) => b.stat !== 'spd');
+      p.buffs.push({ stat: 'spd', mul: d.buffSpd, t: d.buffDur || 20, dur: d.buffDur || 20 });
+    }
     if (d.badChance && Math.random() < d.badChance) {
       p.poison = 5;
       UI.toast('ขนมปังหมดอายุ... ท้องเสีย! (ความเร็วลด 5 วินาที)', 'bad');
       Audio.play('error');
-    }
-    if (id === 'upgrade_stone') {
-      UI.toast('หินอัพเกรดใช้ที่แพเนลกระเป๋า → เลือกอุปกรณ์ → อัพเกรด', 'bad');
-      return;
     }
     Audio.play('loot');
     removeItem(p, id, 1);
@@ -1131,14 +1163,15 @@ const handlers = {
     const p = state.player;
     const d = ITEMS[id];
     if (!d || d.kind !== 'equip') { UI.toast('ไอเทมนี้สวมใส่ไม่ได้', 'bad'); return; }
-    const slot = (id === 'ring_fake') ? 'acc' : 'weapon';
+    const slot = d.slot || ((id === 'ring_fake' || id === 'amulet_whale') ? 'acc' : 'weapon');
     const prev = p.equip[slot];
+    const prevLvl = prev?.lvl || 0;
     if (prev) addItem(p, prev.id, 1);
     removeItem(p, id, 1);
-    p.equip[slot] = { id };
+    p.equip[slot] = { id, lvl: prevLvl }; // โอนระดับตีบวกเดิมให้ของชิ้นใหม่เพื่อไม่ให้เสียเปล่า
     recalcPlayer(p);
     Audio.play('equip');
-    UI.toast(`สวมใส่ ${d.name} แล้ว`, 'good');
+    UI.toast(`สวมใส่ ${d.name}${prevLvl ? ` (+${prevLvl})` : ''} แล้ว`, 'good');
     if (UI.openPanelName === 'inv') UI.renderInventory();
     if (UI.openPanelName === 'stats') UI.renderStats();
   },
@@ -1146,10 +1179,77 @@ const handlers = {
   onUpgrade(slot) {
     const r = upgradeEquipped(state, slot);
     if (!r.ok) { UI.toast(r.msg, 'bad'); Audio.play('error'); return; }
-    if (r.success) UI.toast(`อัพเกรดสำเร็จ! เป็น +${r.lvl} (โอกาส ${(r.rate * 100).toFixed(0)}%)`, 'epic');
-    else if (r.broke) UI.toast('อัพเกรดล้มเหลว และไอเทมแตกสลาย!', 'bad');
-    else UI.toast(`อัพเกรดล้มเหลว (โอกาส ${(r.rate * 100).toFixed(0)}%) หินหายไป 1 ชิ้น`, 'bad');
+    if (r.success) {
+      UI.toast(`อัพเกรดสำเร็จ! เป็น +${r.lvl} (โอกาส ${(r.rate * 100).toFixed(0)}%)${r.aura ? ` · ปลดล็อก ${r.aura.name}!` : ''}`, 'epic');
+    } else if (r.charmUsed) {
+      UI.toast('อัพเกรดล้มเหลว แต่ 🧿 ยันต์กันแตก ช่วยชีวิตอุปกรณ์ไว้ได้!', 'good');
+    } else if (r.broke) {
+      UI.toast('อัพเกรดล้มเหลว และไอเทมแตกสลาย!', 'bad');
+    } else {
+      UI.toast(`อัพเกรดล้มเหลว (โอกาส ${(r.rate * 100).toFixed(0)}%) หินหายไป 1 ชิ้น`, 'bad');
+    }
     UI.renderInventory();
+  },
+
+  onCraftCharm() {
+    const r = craftProtectCharm(state);
+    if (!r.ok) { UI.toast(r.msg, 'bad'); Audio.play('error'); return; }
+    UI.toast('🧿 หลอมยันต์กันแตกสำเร็จ 1 ใบ!', 'epic');
+  },
+
+  onWarp(mapId) {
+    travelTo(mapId);
+  },
+
+  onTogglePvp() {
+    state.pvpMode = !state.pvpMode;
+    Audio.play(state.pvpMode ? 'boss' : 'click');
+    if (state.pvpMode) {
+      UI.toast('⚔️ เปิดโหมด PK — ตอนนี้คุณสามารถคลิกตีหรือกด Space ตีบอทเกรียนได้!', 'bad');
+      sysMsg(state, `${state.player.name} เปิดโหมด PK ท้าประลองทั่วแมพ!`);
+    } else {
+      for (const b of state.bots) b.hostile = false;
+      UI.toast('🛡️ ปิดโหมด PK — กลับสู่โหมดรักสงบ', 'good');
+    }
+    return state.pvpMode;
+  },
+
+  onChallengeBot() {
+    state.pvpMode = true;
+    const p = state.player;
+    const b = state.bots.find((x) => !x.afk && !x.inParty && x.koT <= 0);
+    if (!b) { UI.toast('ไม่มีบอทว่างให้ท้าตีในขณะนี้', 'bad'); return; }
+    b.x = p.x + 22; b.y = p.y;
+    b.prevX = b.x; b.prevY = b.y;
+    b.hp = b.maxHp;
+    b.hostile = true;
+    Audio.play('boss');
+    UI.toast(`⚔️ ท้าประลองกับ ${b.name} (Lv.${b.lvl})! กด Space หรือคลิกตีได้เลย!`, 'epic');
+    pushChat(state, 'world', b.name, `ใครท้ากูวะ ${p.name} เข้ามาดิ!`);
+  },
+
+  onToggleParty(botUid) {
+    const r = togglePartyBot(state, botUid);
+    if (!r.ok) { UI.toast(r.msg, 'bad'); Audio.play('error'); return; }
+    if (r.joined) {
+      UI.toast(`🤝 ${r.bot.name} เข้าร่วมปาร์ตี้แล้ว! (ช่วยตีมอน + บัฟ ATK/EXP)`, 'good');
+      pushChat(state, 'party', r.bot.name, 'สวัสดีครับหัวหน้าตี้ ลุยไหนลุยกัน!');
+    } else {
+      UI.toast(`เตะ ${r.bot.name} ออกจากปาร์ตี้แล้ว`, 'bad');
+    }
+  },
+
+  onGuildBuff(buffId) {
+    const r = applyGuildBuff(state, buffId);
+    if (!r.ok) { UI.toast(r.msg, 'bad'); Audio.play('error'); return; }
+    UI.toast(`${r.buff.icon} รับ ${r.buff.name} สำเร็จ!`, 'epic');
+  },
+
+  onStartTower() {
+    const r = startTowerFloor(state);
+    if (!r.ok) { UI.toast(r.msg, 'bad'); Audio.play('error'); return; }
+    UI.bossAlert(`🗼 หอคอยบั๊ก ชั้นที่ ${r.floor} — กำจัดมอนทั้ง ${r.count} ตัว!`);
+    UI.toast(`🗼 เริ่มหอคอยบั๊ก ชั้นที่ ${r.floor} (มอน ${r.count} ตัว)`, 'epic');
   },
 
   onSellItem(id) {
@@ -1209,7 +1309,7 @@ const handlers = {
     if (pen.lost > 0 || pen.fee > 0) {
       UI.toast(`บทลงโทษ: เสีย EXP ${pen.lost}${pen.fee ? ` และค่าชุบ ${pen.fee} เงิน` : ''}`, 'bad');
     }
-    sysMsg(state, `${p.name} ฟื้นขึ้นที่หมู่บ้าน (เสีย EXP ${pen.lost}${pen.fee ? `, ค่าชุบ ${pen.fee} เงิน` : ''})`);
+    sysMsg(state, `${p.name} ฟื้นขึ้นที่จุดเกิด (เสีย EXP ${pen.lost}${pen.fee ? `, ค่าชุบ ${pen.fee} เงิน` : ''})`);
   },
 
   onSave(slot = 0) {
@@ -1226,16 +1326,15 @@ const handlers = {
     Audio.play('levelup');
     Camera.kick(8, 0.4);
     Particles.spawn('burst', state.player.x, state.player.y - 14, { count: 26, c: '#ffc94d' });
-    UI.toast(`🎓 ออกจากเส้นทาง: ${r.adv.icon} ${r.adv.name}!`, 'epic');
-    sysMsg(state, `${state.player.name} เลือกอาชีพขั้นใหม่แล้ว: ${r.adv.name} (สกิลใหม่: ${SKILLS[r.adv.skill].name})`);
+    UI.toast(`🎓 เลือกเส้นทาง: ${r.adv.icon} ${r.adv.name}!`, 'epic');
+    sysMsg(state, `${state.player.name} เลือกอาชีพขั้นสูงแล้ว: ${r.adv.name} (สกิลใหม่: ${SKILLS[r.adv.skill].name})`);
     UI.buildHotbar(state);
     UI.drawPortrait();
     if (UI.openPanelName === 'skill') UI.renderSkills();
   },
 
   onToggleAuto() {
-    const on = Auto.toggle(state);
-    return on;
+    return Auto.toggle(state);
   },
 
   onToggleAutoQuest() {
@@ -1259,10 +1358,10 @@ const handlers = {
   },
 };
 
-/* ───────────── อินพุตเมาส์ (คลิกเดิน / คลิกเป้า) ───────────── */
+/* ───────────── อินพุตเมาส์ (คลิกเดิน / คลิกเป้า / ซูมกล้อง 3D) ───────────── */
 cv.addEventListener('mousedown', (e) => {
   if (state.screen !== 'play' || state.paused) return;
-  if (e.button === 2) {                 // คลิกขวา = ยกเลิกเป้า/เส้นทาง
+  if (e.button === 2) {
     state.targetMonster = null;
     state.player.path = null; state.player.pathIdx = 0;
     UI.setTarget(null);
@@ -1275,10 +1374,15 @@ cv.addEventListener('mousedown', (e) => {
   orderMove(e.clientX, e.clientY);
 });
 
+cv.addEventListener('wheel', (e) => {
+  if (state.screen !== 'play' || !GFX3D.ok) return;
+  e.preventDefault();
+  GFX3D.setZoom(e.deltaY > 0 ? 0.08 : -0.08);
+}, { passive: false });
+
 window.addEventListener('mousemove', (e) => {
   if (!mouseHeld || state.screen !== 'play' || state.paused) return;
   holdT += 1;
-  // กดค้างแล้วลาก = เดินตามเมาส์แบบต่อเนื่อง (จำกัดความถี่เพื่อไม่ให้คำนวณเส้นทางถี่เกิน)
   const now = performance.now();
   if (now - (state._holdLast || 0) < 140) return;
   state._holdLast = now;
@@ -1293,7 +1397,7 @@ if (TOUCH_ON) {
   const joy = document.getElementById('joystick');
   const knob = document.getElementById('joy-knob');
   let joyId = null;
-  const R = 33;                       // ระยะที่หัวจอยเคลื่อนได้
+  const R = 33;
 
   const joyMove = (t) => {
     const r = joy.getBoundingClientRect();
@@ -1319,7 +1423,6 @@ if (TOUCH_ON) {
   joy.addEventListener('touchend', (e) => { e.preventDefault(); joyEnd(); }, { passive: false });
   joy.addEventListener('touchcancel', (e) => { e.preventDefault(); joyEnd(); }, { passive: false });
 
-  // แตะบนแผนที่ = เดินไปจุดนั้น (ใช้ระบบ A* เดิม)
   cv.addEventListener('touchstart', (e) => {
     if (state.screen !== 'play' || state.paused) return;
     const t = e.changedTouches[0];
@@ -1339,7 +1442,6 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (state.inputLocked && k !== 'escape' && k !== 'enter') return;
   if (MOVE_KEYS.has(k)) {
-    // กดปุ่มเดินเอง = ปิด auto ให้ผู้เล่นคุมเอง (พฤติกรรมมาตรฐานของเกมที่มี auto)
     if (Auto.on) { Auto.toggle(state); UI.toast('ปิด AUTO เพราะคุณเริ่มบังคับเอง', 'bad'); }
     input.keys.add(k); e.preventDefault(); return;
   }
@@ -1349,8 +1451,7 @@ window.addEventListener('keydown', (e) => {
   if (k === ' ' && Settings.get('keyAttack') === 'space') { input.attackQueued = true; e.preventDefault(); return; }
   if (k === 'escape') {
     if (!UI.el.advance.classList.contains('hidden')) {
-      // ต้องเลือกสาขาจริง — กด Esc ไม่ได้หลบ
-      UI.toast('เลือกอา Use Tai ให้ครบก่อน (เลือกครั้งเดียว)', 'bad');
+      UI.toast('เลือกอาชีพขั้นสูงให้ครบก่อน (เลือกครั้งเดียว)', 'bad');
       return;
     }
     if (UI.openPanelName) { UI.closePanels(); return; }
@@ -1367,10 +1468,12 @@ window.addEventListener('keydown', (e) => {
     if (UI.slots && UI.slots[i]) UI.useSlot(UI.slots[i].it);
     return;
   }
-  const panelKey = { i: 'inv', k: 'skill', g: 'gacha', q: 'quest', c: 'stats', h: 'help', j: 'ach', o: 'settings', p: 'pet' }[k];
+  const panelKey = {
+    i: 'inv', k: 'skill', g: 'gacha', q: 'quest', c: 'stats',
+    h: 'help', j: 'ach', o: 'settings', p: 'pet', v: 'social',
+  }[k];
   if (panelKey) { UI.togglePanel(panelKey); return; }
   if (k === 'e') {
-    // หีบสมบัติสำคัญกว่า NPC
     const chest = state.world.chestNear(state.player.x, state.player.y, 34);
     if (chest) { openChest(chest); return; }
     const n = nearestNpc();
@@ -1393,7 +1496,6 @@ state.onLevelUp = (lvl) => {
   UI.levelUp(lvl);
   sysMsg(state, `${state.player.name} ขึ้นเลเวล ${lvl} แล้ว!`);
   UI.updateHotbar(state);
-  // เลเวล 10 = ถึงเวลาเลือกอาชีพลึก (แสดงครั้งเดียว จนกว่าจะเลือก)
   if (lvl >= 10 && !state.player.advId && !state._advOffered) {
     state._advOffered = true;
     setTimeout(() => {
@@ -1409,20 +1511,20 @@ state.onPlayerDeath = (m) => {
   UI.showDeath(m.name, deathQuote(state));
   sysMsg(state, `${state.player.name} ถึงแก่กรรมโดย ${m.name}`);
 };
-state.onBossSpawn = (b) => {
+state.onBossSpawn = () => {
   UI.bossAlert('⚠ บอสโลกปรากฏตัวแล้วที่ลานตะวันออก — ครูฝึกสอนการบ้าน');
   UI.toast('บอสโลกเกิดแล้ว! ไปที่ลานตะวันออก (ดูมินิแมป)', 'bad');
   Audio.play('boss');
   Camera.kick(10, 0.8);
 };
-state.onBossKilled = (m) => {
+state.onBossKilled = () => {
   sysMsg(state, `บอสโลกถูกปราบโดย ${state.player.name}`);
   UI.toast('ปราบบอสโลกสำเร็จ! ของรางวัลตกลงพื้น', 'epic');
 };
-state.onBossPhase2 = (m) => {
+state.onBossPhase2 = () => {
   UI.bossAlert('⚠ บอสโลกเข้าสู่เฟส 2 — ท่าแรงขึ้น วงเตือนสั้นลง!');
   pushChat(state, 'world', BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)], 'บอสเฟส2แล้วว! ท่าลงมือเร็วขึ้น ระวังใจ');
-  sysMsg(state, 'บอสโลกเข้ารูปโหมดครูฝึกโปเกิ้ล — ท่าใหม่ 3 แบบ');
+  sysMsg(state, 'บอสโลกเข้าสู่โหมดโกรธจัด — ท่าใหม่ 3 แบบ');
 };
 state.onBossTaunt = (m) => {
   pushChat(state, 'world', m.name, m.taunt || 'ทำการบ้านครบหรือยัง!', 'gm');
@@ -1435,8 +1537,16 @@ state.onEliteKilled = (m) => {
   UI.toast(`ปราบ ${m.name} ได้! ของดรอปเพิ่มขึ้น`, 'epic');
 };
 state.onPathBlocked = () => { UI.toast('ทางตัน — เลือกจุดหมายใหม่', 'bad'); };
+state.onPvpWin = (b, gold, exp) => {
+  UI.toast(`🥊 ชนะประลอง ${b.name}! +${gold} เงิน · +${exp} EXP`, 'epic');
+  sysMsg(state, `${state.player.name} เอาชนะ ${b.name} ในการประลอง PvP!`);
+};
+state.onTowerClear = (fl, gold, gems) => {
+  UI.bossAlert(`🎉 เคลียร์หอคอยบั๊ก ชั้นที่ ${fl} สำเร็จ!`);
+  UI.toast(`🗼 ผ่านชั้น ${fl}! ได้ +${gold} เงิน · +${gems} เพชร${fl % 2 === 0 ? ' · 🧿 ยันต์กันแตก ×1' : ''}`, 'epic');
+  sysMsg(state, `${state.player.name} พิชิตหอคอยบั๊ก ชั้นที่ ${fl} สำเร็จ!`);
+};
 
-/* ── hook ของโหมด AUTO ── */
 const randBot = () => BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)];
 const pickLine = (a) => a[Math.floor(Math.random() * a.length)];
 state.onAutoSkill = (id) => handlers.onSkill(id);
@@ -1460,12 +1570,11 @@ state.onAutoThink = () => {
   if (Math.random() < 0.5) pushChat(state, 'world', randBot(), pickLine(AUTO_CHAT.think));
 };
 
-/* ── hook ของออโต้เควสต์ ── */
 state.onAutoQuest = (on) => {
   Audio.play(on ? 'gacha' : 'click');
   if (on) {
-    UI.toast('🧾 เปิดออโต้เควสต์ — เกมจะรับเควสต์ บายมอน แล้วกลับส่งเอง', 'good');
-    pushChat(state, 'world', randBot(), 'มีบอทช่วยทำเควสต์ด้วยนะ วันนี้เด็กไม่ต้องแม่ง');
+    UI.toast('🧾 เปิดออโต้เควสต์ — เกมจะรับเควสต์ ตีมอน แล้วกลับส่งเอง', 'good');
+    pushChat(state, 'world', randBot(), 'มีบอทช่วยทำเควสต์ด้วยนะ วันนี้สบายแล้ว');
   } else {
     UI.toast('ปิดออโต้เควสต์แล้ว', 'bad');
   }
@@ -1482,14 +1591,13 @@ state.onAutoTalk = (npcId, q) => {
   Audio.play('chat');
 };
 
-/* ── hook ของสัตว์เลี้ยง ── */
 state.onPetExp = (m) => onMonsterKilled(state, m);
 state.onPetKill = (m) => killMonster(state, m);
 state.onPetKO = (pet, line) => {
   UI.toast(`${pet.nickname} หมดสติ! ${line}`, 'bad');
   UI.refreshPetHud(state);
 };
-state.onPetLevelUp = (pet, n) => {
+state.onPetLevelUp = (pet) => {
   UI.toast(`📍 ${pet.nickname} ขึ้นเลเวล ${pet.lvl}!`, 'good');
   UI.refreshPetHud(state);
 };
@@ -1502,19 +1610,16 @@ function m0Name() { return state.boss.entity ? state.boss.entity.name : 'บอ�
 
 /* ───────────── บูต ───────────── */
 Settings.load();
-// ตั้งค่าที่เปลี่ยนจากที่ไหนก็ต้องส่งผลทุกที่ (เดิมแก้ผ่าน UI แล้วค่าบางตัวไม่ซิงค์)
 Settings.onChange((k, v, all) => {
-  if (k === '*' ) { Camera.enabled = (all?.shake ?? 0) > 0; Camera.scale = Number(all?.shake) || 0; Particles.quality = all?.particles || 'high'; DayNight.enabled = !!all?.dayNight; return; }
+  if (k === '*') { Camera.enabled = (all?.shake ?? 0) > 0; Camera.scale = Number(all?.shake) || 0; Particles.quality = all?.particles || 'high'; DayNight.enabled = !!all?.dayNight; return; }
   if (k === 'shake') { Camera.enabled = v > 0; Camera.scale = Number(v) || 0; }
   else if (k === 'particles') Particles.quality = v;
   else if (k === 'dayNight') DayNight.enabled = v;
   else if (k === 'render3d') {
-    // เปลี่ยนกลางเกมได้เลย: on = เปิด three.js (init ถ้ายังไม่เปิด) · off = กลับ 2D
     if (v === 'off') {
       if (GFX3D.ok) { try { GFX3D.renderer.dispose(); } catch (e) {} }
       GFX3D.ok = false; GFX3D.reason = 'off';
-    }
-    else if (!GFX3D.ok && state.screen === 'play') {
+    } else if (!GFX3D.ok && state.screen === 'play') {
       GFX3D.reason = null;
       if (GFX3D.init(state.world)) GFX3D.resize(view.w, view.h);
     }
@@ -1535,7 +1640,6 @@ resize();
 migrateLegacy();
 UI.refreshTitleMenu();
 
-// ปลดล็อกเสียงเมื่อผู้ใช้คลิกครั้งแรก
 const unlock = () => {
   if (Audio.resume()) {
     Settings.apply(Audio);
@@ -1560,5 +1664,6 @@ window.__GRIAN__ = {
   hasSave, listSlots, wipeSave,
   get finder() { return finder; },
   orderMove, openChest, beginCapture, travelTo, advanceClass,
+  craftProtectCharm, togglePartyBot, applyGuildBuff, startTowerFloor, playerAura,
   T, HURT_TILES,
 };

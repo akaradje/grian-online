@@ -1,8 +1,12 @@
 /* ═══════════════════════════════════════════════════════════
-   entities.js — ผู้เล่น · มอน · NPC · ผู้เล่นบอท · การต่อสู้
+   entities.js — ผู้เล่น · มอน · NPC · ผู้เล่นบอท · การต่อสู้ · ปาร์ตี้ · PvP · หอคอยบั๊ก
    ═══════════════════════════════════════════════════════════ */
 
-import { CONFIG, CLASSES, SKILLS, MONSTERS, ITEMS, NPCS, BOT_NAMES, AFK_NAMES, ELITE, ELITE_CHANCE, BOSS_ABILITIES, BOSS_ABILITIES_P2, UPGRADE, ADVANCED } from './data.js';
+import {
+  CONFIG, CLASSES, SKILLS, MONSTERS, ITEMS, NPCS, BOT_NAMES, AFK_NAMES,
+  ELITE, ELITE_CHANCE, BOSS_ABILITIES, BOSS_ABILITIES_P2, UPGRADE, ADVANCED,
+  PVP_TAUNTS, PVP_RANKS, PARTY_LINES, GUILD_BUFFS,
+} from './data.js';
 import { Audio } from './audio.js';
 import { Particles, Camera, HitStop, compact } from './fx.js';
 import { VFX, spawnSkillFx } from './vfx.js';
@@ -12,6 +16,27 @@ export const BOT_ATTACK_RANGE = 28;
 
 /* ── สูตรเลเวล ── */
 export function xpFor(lvl) { return Math.floor(70 * Math.pow(lvl, 1.5)) + 30; }
+
+/* ── ยศ PvP ── */
+export function pvpRank(p) {
+  const wins = p?.ctr?.pvpWins || 0;
+  let cur = PVP_RANKS[0];
+  for (const r of PVP_RANKS) if (wins >= r.min) cur = r;
+  return cur;
+}
+
+/* ── ออร่าจากระดับการตีบวก (+5 / +7 / +9 / +10) ── */
+export function playerAura(p) {
+  if (!p || !p.equip) return null;
+  const wLvl = p.equip.weapon?.lvl || 0;
+  const aLvl = p.equip.acc?.lvl || 0;
+  const best = Math.max(wLvl, aLvl);
+  if (best >= 10) return { ...UPGRADE.auras[10], lvl: best };
+  if (best >= 9) return { ...UPGRADE.auras[9], lvl: best };
+  if (best >= 7) return { ...UPGRADE.auras[7], lvl: best };
+  if (best >= 5) return { ...UPGRADE.auras[5], lvl: best };
+  return null;
+}
 
 /* ── สร้างผู้เล่น ── */
 export function createPlayer(name, clsId) {
@@ -29,6 +54,7 @@ export function createPlayer(name, clsId) {
     quests: {}, kills: {}, talks: {},
     pity: 0, totalPulls: 0, companions: [],
     dead: false, hitFlash: 0, kills_total: 0, deaths: 0, dropsTotal: 0,
+    partyCount: 0,
     // สถิติสำหรับความสำเร็จ
     maxGold: 60, unlocked: {},
     ctr: {
@@ -36,6 +62,7 @@ export function createPlayer(name, clsId) {
       banished: 0, gacha5: 0, gacha1: 0, bossKills: 0, distance: 0,
       idle: 0, idleBest: 0, playtime: 0, upgradeOk: 0, upgradeFail: 0,
       autoTime: 0, manualTime: 0, autoKills: 0,
+      pvpWins: 0, towerFloor: 0, visitedCyber: 0, charmSaved: 0, charmCrafted: 0,
     },
   };
   recalcPlayer(p);
@@ -47,7 +74,7 @@ export function createPlayer(name, clsId) {
   return p;
 }
 
-/** สกิลที่ผู้เล่นมี — รวมสกิลของอาชีพขั้นสูง (เดิมใช้ cls.skills ตรง ๆ) */
+/** สกิลที่ผู้เล่นมี — รวมสกิลของอาชีพขั้นสูง */
 export function playerSkills(p) {
   if (p.advId && ADVANCED[p.advId]) return [...p.cls.skills, ADVANCED[p.advId].skill];
   return p.cls.skills;
@@ -76,9 +103,9 @@ export function recalcPlayer(p) {
   let atk = p.base.atk + g(2.2);
   let def = p.base.def + g(1.1);
   let luck = p.base.luck + g(0.4);
-  const spd = p.base.spd + g(0.8);
+  let spd = p.base.spd + g(0.8);
 
-  // บอนัสจากอาชีพขั้นสูง (สาขาย่อย)
+  // โบนัสจากอาชีพขั้นสูง (สาขาย่อย)
   if (p.advId && ADVANCED[p.advId]) {
     for (const [k, v] of Object.entries(ADVANCED[p.advId].bonus || {})) {
       if (k === 'hp') maxHp += v;
@@ -90,15 +117,23 @@ export function recalcPlayer(p) {
     }
   }
 
+  // โบนัสอุปกรณ์ + ระดับการตีบวก (+1 ถึง +10)
   for (const slot of ['weapon', 'acc']) {
     const it = p.equip[slot];
     if (!it) continue;
     const d = ITEMS[it.id]; if (!d) continue;
-    atk += d.atk || 0; def += d.def || 0; luck += d.luck || 0;
+    const upLvl = it.lvl || 0;
+    const per = UPGRADE.statPerLvl?.[slot] || { atk: 2, def: 0, luck: 1 };
+    atk += (d.atk || 0) + upLvl * (per.atk || 0);
+    def += (d.def || 0) + upLvl * (per.def || 0);
+    luck += (d.luck || 0) + upLvl * (per.luck || 0);
   }
+
+  // โบนัสยศ PvP
+  atk += pvpRank(p).bonusAtk || 0;
+
   // พาสซีฟอาชีพ
   if (p.clsId === 'debt' && p.gold <= 0) atk *= 1.2;
-  if (p.clsId === 'cafe') { /* spd คิดตอนคำนวณการเคลื่อนที่ */ }
 
   p.maxHp = Math.round(maxHp); p.maxMp = Math.round(maxMp);
   p.atk = Math.round(atk); p.def = Math.round(def); p.luck = Math.round(luck); p.spd = spd;
@@ -109,6 +144,7 @@ export function recalcPlayer(p) {
 export function effAtk(p) {
   let a = p.atk;
   for (const b of p.buffs) if (b.stat === 'atk') a *= b.mul;
+  if (p.partyCount > 0) a *= (1 + p.partyCount * 0.10); // บัฟปาร์ตี้ +10% ต่อคน
   if (p.weak > 0) a *= 0.5;
   if (p.clsId === 'fivestar' && p.inCombatT > 30) a *= 0.7; // ดีบัฟซ่อนเร้น
   return a;
@@ -127,17 +163,17 @@ export function dropBonus(p) {
   return m;
 }
 
-/* ── กระเป๋า (ย้ายไป inventory.js เพื่อให้ pets.js ใช้ร่วมได้โดยไม่มี cycle) ── */
+/* ── กระเป๋า ── */
 export { addItem, removeItem, countItem } from './inventory.js';
 import { addItem, removeItem, countItem } from './inventory.js';
 
 /* ── มอนสเตอร์ ── */
 let entSeq = 0;
 export function createMonster(id, x, y, elite) {
-  const d = MONSTERS[id];
+  const d = MONSTERS[id] || MONSTERS.rat;
   const e = elite || null;
   const m = {
-    kind: 'monster', _uid: ++entSeq, def: d, id, name: d.name, lvl: d.lvl,
+    kind: 'monster', _uid: ++entSeq, def: d, id: d.id, name: d.name, lvl: d.lvl,
     hp: d.hp, maxHp: d.hp, atk: d.atk, defv: d.def, spd: d.spd,
     exp: d.exp, gold: d.gold, boss: !!d.boss, elite: e,
     x, y, prevX: x, prevY: y, dir: 1, frame: 0, animT: 0,
@@ -163,9 +199,10 @@ export function spawnMonster(state, id, spot, forceElite) {
   const s = spot || state.world.randomSpot(Math.random, {
     awayFrom: state.player, minDist: 90, outsideVillage: true,
   });
-  const elite = (forceElite || (!MONSTERS[id].boss && Math.random() < ELITE_CHANCE))
+  const def = MONSTERS[id] || MONSTERS.rat;
+  const elite = (forceElite || (!def.boss && Math.random() < ELITE_CHANCE))
     ? ELITE[Math.floor(Math.random() * ELITE.length)] : null;
-  const m = createMonster(id, s.x, s.y, elite);
+  const m = createMonster(def.id, s.x, s.y, elite);
   state.monsters.push(m);
   if (elite) {
     state.onEliteSpawn?.(m);
@@ -183,14 +220,18 @@ export function createNpc(id, x, y) {
   };
 }
 
-/* ── ผู้เล่นบอท (ทำให้โลกดูมีคน) ── */
+/* ── ผู้เล่นบอท (ทำให้โลกดูมีคน + ชวนเข้าตี้ได้ + ท้าดวล PvP ได้) ── */
 export function createBot(name, x, y, afk = false) {
+  const lvl = 2 + Math.floor(Math.random() * 28);
+  const maxHp = 90 + lvl * 12;
   return {
-    kind: 'bot', name, lvl: 1 + Math.floor(Math.random() * 60),
-    x, y, dir: 1, frame: 0, animT: 0, afk,
+    kind: 'bot', name, lvl,
+    x, y, prevX: x, prevY: y, dir: 1, frame: 0, animT: 0, afk,
     st: 'wander', wanderT: Math.random() * 3, target: null,
     wanderDir: { x: 0, y: 0 },
-    atkCd: 0, chatT: 6 + Math.random() * 26, hp: 100, maxHp: 100,
+    atkCd: 0, chatT: 6 + Math.random() * 26,
+    hp: maxHp, maxHp, atk: 8 + Math.floor(lvl * 1.4), defv: 3 + Math.floor(lvl * 0.5),
+    inParty: false, hostile: false, koT: 0, hitFlash: 0,
   };
 }
 
@@ -206,6 +247,99 @@ export function makeBots(world) {
     bots.push(createBot(n, s.x, s.y, true));
   });
   return bots;
+}
+
+/* ── ระบบปาร์ตี้บอทจำลอง & บัฟกิลด์ (v1.0.0) ── */
+export function partyBots(state) {
+  return (state.bots || []).filter((b) => b.inParty && !b.afk);
+}
+
+export function togglePartyBot(state, botUid) {
+  const p = state.player;
+  const b = (state.bots || []).find((x) => x._uid === botUid);
+  if (!b) return { ok: false, msg: 'ไม่พบผู้เล่นนี้ในแมพ' };
+  if (b.afk) return { ok: false, msg: `${b.name} กำลัง AFK ตั้งแต่ปี 2550 ชวนไม่ได้` };
+  if (b.inParty) {
+    b.inParty = false;
+    p.partyCount = partyBots(state).length;
+    recalcPlayer(p);
+    return { ok: true, joined: false, bot: b };
+  }
+  if (partyBots(state).length >= 2) {
+    return { ok: false, msg: 'ปาร์ตี้รับบอทได้สูงสุด 2 คน (มากกว่านี้เซิร์ฟแลค)' };
+  }
+  b.inParty = true;
+  b.hostile = false;
+  b.hp = b.maxHp;
+  b.x = p.x + (Math.random() > 0.5 ? 22 : -22);
+  b.y = p.y + 12;
+  b.prevX = b.x; b.prevY = b.y;
+  p.partyCount = partyBots(state).length;
+  recalcPlayer(p);
+  Particles.spawn('heal', b.x, b.y - 8, { count: 8 });
+  Audio.play('levelup');
+  return { ok: true, joined: true, bot: b };
+}
+
+export function applyGuildBuff(state, buffId) {
+  const p = state.player;
+  const gb = GUILD_BUFFS.find((x) => x.id === buffId);
+  if (!gb) return { ok: false, msg: 'ไม่พบบัฟกิลด์นี้' };
+  if (p.gold < gb.cost) return { ok: false, msg: `เงินบริจาคกิลด์ไม่พอ (ต้องใช้ ${gb.cost} เงิน)` };
+  p.gold -= gb.cost;
+  p.buffs = p.buffs.filter((b) => b.stat !== gb.stat);
+  p.buffs.push({ stat: gb.stat, mul: gb.mul, t: gb.dur, dur: gb.dur });
+  recalcPlayer(p);
+  Audio.play('rare');
+  Particles.spawn('burst', p.x, p.y - 12, { count: 16, c: '#ffc94d' });
+  addFloater(state, p.x, p.y - 26, gb.name, '#ffc94d', 1.05);
+  return { ok: true, buff: gb };
+}
+
+/* ── ระบบดันเจี้ยนไต่หอคอยบั๊ก (Endless Bug Tower Wave — v1.0.0) ── */
+export function startTowerFloor(state) {
+  const p = state.player;
+  if (!p || p.dead) return { ok: false, msg: 'ตัวละครยังไม่พร้อม' };
+  const activeWave = state.monsters.filter((m) => !m.dead && m.towerWave);
+  if (activeWave.length > 0) {
+    return { ok: false, msg: `ยังมีมอนหอคอยเหลืออีก ${activeWave.length} ตัว! กำจัดให้หมดก่อน` };
+  }
+  const nextFloor = (p.ctr.towerFloor || 0) + 1;
+  const count = Math.min(6, 2 + Math.ceil(nextFloor * 0.7));
+  const pool = nextFloor >= 4
+    ? ['botmon', 'glitchbug', 'imp', 'skull', 'whale']
+    : (nextFloor >= 2 ? ['taxman', 'ghost', 'bat', 'imp'] : ['rat', 'slime', 'bat', 'taxman']);
+
+  let spawned = 0;
+  for (let i = 0; i < count; i++) {
+    const id = pool[i % pool.length];
+    const ang = (i / count) * Math.PI * 2;
+    const dist = 58 + (i % 2) * 20;
+    let sx = p.x + Math.cos(ang) * dist;
+    let sy = p.y + Math.sin(ang) * dist;
+    if (state.world.solidAtPx(sx, sy)) {
+      const sp = state.world.randomSpot(Math.random, { awayFrom: p, minDist: 45, tries: 40 });
+      sx = sp.x; sy = sp.y;
+    }
+    const isLeader = i === 0;
+    const elite = isLeader ? ELITE[(nextFloor - 1) % ELITE.length] : null;
+    const m = createMonster(id, sx, sy, elite);
+    // สเกลความเก่งตามชั้นหอคอย
+    const scale = 1 + (nextFloor - 1) * 0.18;
+    m.lvl = Math.max(m.lvl, nextFloor * 3);
+    m.maxHp = Math.round(m.maxHp * scale);
+    m.hp = m.maxHp;
+    m.atk = Math.round(m.atk * Math.sqrt(scale));
+    m.towerWave = nextFloor;
+    m.name = `[หอคอยชั้น ${nextFloor}] ${m.name}`;
+    state.monsters.push(m);
+    Particles.spawn('burst', sx, sy - 8, { count: 8, c: '#4ae8ff' });
+    spawned++;
+  }
+  state.tower = { active: true, floor: nextFloor, total: spawned };
+  Audio.play('boss');
+  Camera.kick(8, 0.35);
+  return { ok: true, floor: nextFloor, count: spawned };
 }
 
 /* ── เอฟเฟกต์ & ตัวเลขลอย ── */
@@ -226,6 +360,45 @@ function rollDamage(atk, def, luck = 0, power = 1) {
   return { dmg, crit };
 }
 
+/* ── โจมตีบอทในโหมด PvP (PK Mode — v1.0.0) ── */
+export function hitBot(state, b, atk, luck, power = 1) {
+  if (!b || b.afk || b.inParty || b.koT > 0) return 0;
+  const { dmg, crit } = rollDamage(atk, b.defv || 4, luck, power);
+  b.hp -= dmg;
+  b.hitFlash = 0.14;
+  if (!b.hostile) {
+    b.hostile = true;
+    const taunt = PVP_TAUNTS[Math.floor(Math.random() * PVP_TAUNTS.length)];
+    addFloater(state, b.x, b.y - 26, taunt, '#ff9d5c', 0.85);
+  }
+  addFloater(state, b.x + (Math.random() * 10 - 5), b.y - 12, (crit ? '★' : '') + dmg,
+    crit ? '#ffc94d' : '#ff8f8f', crit ? 1.3 : 1);
+  addEffect(state, 'hit', b.x, b.y - 8, 0.18);
+  Particles.spawn(crit ? 'burst' : 'spark', b.x, b.y - 9, { count: crit ? 8 : 4, c: '#ff6b6b' });
+  Audio.play(crit ? 'crit' : 'hit');
+  Camera.kick(crit ? 4 : 1.5, 0.12);
+
+  if (b.hp <= 0) {
+    b.hp = 0;
+    b.hostile = false;
+    b.koT = 10; // สลบ 10 วินาทีก่อนเกิดใหม่
+    const p = state.player;
+    p.ctr.pvpWins = (p.ctr.pvpWins || 0) + 1;
+    const rewardGold = 45 + b.lvl * 4;
+    const rewardExp = 35 + b.lvl * 3;
+    p.gold += rewardGold;
+    p.exp += rewardExp;
+    recalcPlayer(p);
+    checkLevelUp(state);
+    Particles.spawn('burst', b.x, b.y - 10, { count: 18, c: '#ffc94d' });
+    Audio.play('rare');
+    addFloater(state, b.x, b.y - 22, `ชนะ PvP! +${rewardGold} เงิน`, '#ffc94d', 1.1);
+    if (Math.random() < 0.35) addItem(p, 'upgrade_stone', 1);
+    state.onPvpWin?.(b, rewardGold, rewardExp);
+  }
+  return dmg;
+}
+
 /* ── โจมตีมอน ── */
 export function hitMonster(state, m, atk, luck, power, tag = '') {
   if (m.dead) return 0;
@@ -238,7 +411,6 @@ export function hitMonster(state, m, atk, luck, power, tag = '') {
   if (tag) addFloater(state, m.x, m.y - 22, tag, '#b98bff', 0.9);
   addEffect(state, 'hit', m.x, m.y - 8, 0.18);
 
-  // เอฟเฟกต์ตามน้ำหนักของการตี
   Particles.spawn(crit ? 'burst' : 'spark', m.x, m.y - 9, {
     count: crit ? 9 : 4, c: crit ? '#ffc94d' : '#ffe9a8',
   });
@@ -264,7 +436,8 @@ export function killMonster(state, m) {
   p.kills[m.id] = (p.kills[m.id] || 0) + 1;
   if (state.autoOn) p.ctr.autoKills = (p.ctr.autoKills || 0) + 1;
 
-  const gainExp = Math.round(m.exp);
+  const partyMul = 1 + (p.partyCount || 0) * 0.15;
+  const gainExp = Math.round(m.exp * partyMul);
   const gainGold = Math.round(m.gold * (p.clsId === 'troll' ? 1.25 : 1));
   p.exp += gainExp;
   p.gold += gainGold;
@@ -299,6 +472,22 @@ export function killMonster(state, m) {
     state.onEliteKilled?.(m);
   }
 
+  // เช็กว่าเคลียร์เวฟหอคอยบั๊กหรือยัง
+  if (m.towerWave) {
+    const rem = state.monsters.filter((x) => !x.dead && x.towerWave === m.towerWave).length;
+    if (rem === 0) {
+      const fl = m.towerWave;
+      p.ctr.towerFloor = Math.max(p.ctr.towerFloor || 0, fl);
+      const rwGold = fl * 150;
+      const rwGems = fl * 20;
+      p.gold += rwGold;
+      p.gems += rwGems;
+      if (fl % 2 === 0) addItem(p, 'protect_charm', 1);
+      if (state.tower) state.tower.active = false;
+      state.onTowerClear?.(fl, rwGold, rwGems);
+    }
+  }
+
   state.onPetExp?.(m);          // ให้สัตว์เลี้ยงได้ EXP จากการสังหารนี้
   checkLevelUp(state);
   return true;
@@ -324,18 +513,36 @@ export function checkLevelUp(state) {
   }
 }
 
+export function nearestHostileBot(state, x, y, range) {
+  if (!state.pvpMode) return null;
+  let best = null, bd = range * range;
+  for (const b of (state.bots || [])) {
+    if (b.afk || b.inParty || b.koT > 0) continue;
+    const d = (b.x - x) ** 2 + (b.y - y) ** 2;
+    if (d < bd) { bd = d; best = b; }
+  }
+  return best;
+}
+
 /* ── ผู้เล่นโจมตีปกติ ── */
 export function playerAttack(state, power = 1, tag = '', forcedTarget = null) {
   const p = state.player;
+  const botTarget = !forcedTarget ? nearestHostileBot(state, p.x, p.y, ATTACK_RANGE + 12) : null;
   const m = (forcedTarget && !forcedTarget.dead)
     ? forcedTarget
-    : nearestMonster(state, p.x, p.y, ATTACK_RANGE + 8);
-  p.dir = m ? Math.sign(m.x - p.x) || p.dir : p.dir;
+    : ((botTarget && botTarget.hostile) ? null : nearestMonster(state, p.x, p.y, ATTACK_RANGE + 8));
+  const target = m || botTarget;
+
+  p.dir = target ? Math.sign(target.x - p.x) || p.dir : p.dir;
   VFX.spawn('arc', { x: p.x + p.dir * 14, y: p.y - 8, color: '#ffffff', size: 17, dur: 0.22 });
   Audio.play('swing');
-  if (!m) return null;
-  const dmg = hitMonster(state, m, effAtk(p), p.luck, power, tag);
-  // ดาบหัก
+  if (!target) return null;
+
+  const dmg = m
+    ? hitMonster(state, m, effAtk(p), p.luck, power, tag)
+    : hitBot(state, botTarget, effAtk(p), p.luck, power);
+
+  // ดาบหัก (เฉพาะของก๊อปที่มี breakChance)
   const w = p.equip.weapon;
   if (w && ITEMS[w.id]?.breakChance && Math.random() < ITEMS[w.id].breakChance) {
     removeItem(p, w.id, 1);
@@ -349,6 +556,14 @@ export function playerAttack(state, power = 1, tag = '', forcedTarget = null) {
 
 export function nearestMonster(state, x, y, range) {
   let best = null, bd = range * range;
+  if (state.tower?.active) {
+    for (const m of state.monsters) {
+      if (m.dead || !m.towerWave) continue;
+      const d = (m.x - x) ** 2 + (m.y - y) ** 2;
+      if (d < bd) { bd = d; best = m; }
+    }
+    if (best) return best;
+  }
   for (const m of state.monsters) {
     if (m.dead) continue;
     const d = (m.x - x) ** 2 + (m.y - y) ** 2;
@@ -377,10 +592,11 @@ export function useSkill(state, skillId) {
   }
 
   Audio.play(sk.type === 'banish' ? 'ban' : 'skill');
-  // เอฟเฟกต์เฉพาะของท่านี้ (ดูสกิลไหนออกทันทีจากภาพ)
+  const nearTarget = nearestMonster(state, p.x, p.y, ATTACK_RANGE + 26)
+    || nearestHostileBot(state, p.x, p.y, ATTACK_RANGE + 26);
   spawnSkillFx(skillId, {
     caster: p,
-    target: nearestMonster(state, p.x, p.y, ATTACK_RANGE + 26),
+    target: nearTarget,
     skill: sk,
   });
   state.onSkillCast?.(skillId, sk);
@@ -390,7 +606,7 @@ export function useSkill(state, skillId) {
       playerAttack(state, sk.power);
       if (sk.selfWeak) {
         p.weak = sk.selfWeak;
-        state.onToast?.('ท่าไม้ตายเทพสำเร็จ! หมดสภาพ 12 วินาที (ระบบยังไม่แก้)', 'bad');
+        state.onToast?.('ท่าไม้ตายเทพสำเร็จ! หมดสภาพชั่วคราว (ระบบยังไม่แก้)', 'bad');
       }
       break;
     }
@@ -402,6 +618,15 @@ export function useSkill(state, skillId) {
         if (Math.hypot(m.x - p.x, m.y - p.y) <= sk.radius) {
           hitMonster(state, m, effAtk(p), p.luck, sk.power);
           hit++;
+        }
+      }
+      if (state.pvpMode) {
+        for (const b of state.bots) {
+          if (b.afk || b.inParty || b.koT > 0) continue;
+          if (Math.hypot(b.x - p.x, b.y - p.y) <= sk.radius) {
+            hitBot(state, b, effAtk(p), p.luck, sk.power);
+            hit++;
+          }
         }
       }
       if (hit) p.gold += hit * 4;
@@ -505,7 +730,7 @@ export function monsterHitPlayer(state, m) {
   }
 }
 
-/* ── บทลงโทษเมื่อตาย (สอดคล้องกับข้อความที่เกมเขียนไว้เอง) ── */
+/* ── บทลงโทษเมื่อตาย ── */
 export function applyDeathPenalty(state, mul = 1) {
   const p = state.player;
   const lost = Math.floor(p.exp * 0.01 * mul);
@@ -515,7 +740,7 @@ export function applyDeathPenalty(state, mul = 1) {
   return { lost, fee };
 }
 
-/* ── อัพเกรดอุปกรณ์ (+n) ── */
+/* ── อัพเกรดอุปกรณ์ (+n) พร้อมระบบยันต์กันแตก & คราฟต์ยันต์ ── */
 export function upgradeEquipped(state, slot) {
   const p = state.player;
   const it = p.equip[slot];
@@ -537,21 +762,46 @@ export function upgradeEquipped(state, slot) {
     recalcPlayer(p);
     Audio.play('upgrade_ok');
     Particles.spawn('burst', p.x, p.y - 16, { count: 14, c: '#ffc94d' });
-    return { ok: true, success: true, lvl: it.lvl, rate, gold };
+    return { ok: true, success: true, lvl: it.lvl, rate, gold, aura: playerAura(p) };
   }
 
   const breakChance = lvl >= UPGRADE.breakFrom ? UPGRADE.breakChance[lvl] : 0;
   let broke = false;
+  let charmUsed = false;
   if (Math.random() < breakChance) {
-    removeItem(p, it.id, 1);
-    p.equip[slot] = null;
-    recalcPlayer(p);
-    broke = true;
+    if (countItem(p, UPGRADE.protectItem) > 0) {
+      removeItem(p, UPGRADE.protectItem, 1);
+      charmUsed = true;
+      p.ctr.charmSaved = (p.ctr.charmSaved || 0) + 1;
+    } else {
+      removeItem(p, it.id, 1);
+      p.equip[slot] = null;
+      recalcPlayer(p);
+      broke = true;
+    }
   }
   p.ctr.upgradeFail = (p.ctr.upgradeFail || 0) + 1;
   Audio.play('upgrade_fail');
   Particles.spawn('smoke', p.x, p.y - 12, { count: 6, c: 'rgba(150,150,160,.5)' });
-  return { ok: true, success: false, broke, rate, gold, lvl };
+  return { ok: true, success: false, broke, charmUsed, rate, gold, lvl };
+}
+
+export function craftProtectCharm(state) {
+  const p = state.player;
+  const { stones, gold } = UPGRADE.craftProtectCost;
+  if (countItem(p, UPGRADE.stoneItem) < stones) {
+    return { ok: false, msg: `ต้องใช้หินอัพเกรด ${stones} ก้อน (มี ${countItem(p, UPGRADE.stoneItem)})` };
+  }
+  if (p.gold < gold) {
+    return { ok: false, msg: `เงินไม่พอหลอมยันต์ (ต้องใช้ ${gold} เงิน)` };
+  }
+  removeItem(p, UPGRADE.stoneItem, stones);
+  p.gold -= gold;
+  addItem(p, UPGRADE.protectItem, 1);
+  p.ctr.charmCrafted = (p.ctr.charmCrafted || 0) + 1;
+  Audio.play('upgrade_ok');
+  Particles.spawn('burst', p.x, p.y - 14, { count: 12, c: '#4ae8ff' });
+  return { ok: true };
 }
 
 /* ── เดินตามเส้นทางที่คำนวณไว้ (คลิกเดิน) ── */
@@ -572,8 +822,6 @@ function followPath(state, p, dt) {
   if (!state.world.solidAtPx(p.x, ny)) { p.y = ny; moved = true; }
 
   if (!moved) {
-    // ติดมุม — ข้ามจุดพักนี้ไปก่อน แล้วค่อยลองใหม่ ถ้าหมดทางจริงจึงยกเลิก
-    // (การยกเลิกทันทีทำให้ผู้เล่นค้างกลางทางเวลาจุดพักอยู่ชิดกำแพง)
     p.stuckFrames = (p.stuckFrames || 0) + 1;
     if (p.stuckFrames < 8) {
       p.pathIdx++;
@@ -607,19 +855,16 @@ export function updateMonsters(state, dt) {
 
     const d = Math.hypot(p.x - m.x, p.y - m.y);
     const aggro = m.def.aggro || 0;
-    // พาสซีฟแอดมิน: มอนไม่โจมตีก่อน
     const adminPassive = p.clsId === 'admin' && !m.engaged;
 
-    // บอสโลก: ตรวจการร่ายท่าก่อน ถ้ากำลังร่ายจะหยุดเดิน
     if (m.boss && updateBossAbility(state, m, dt, d)) continue;
 
-    // ── เฟส 2: เหลือครึ่งเลือด = โหดขึ้นจริง ──
     if (m.boss && !m.phase2 && !m.dead && m.hp > 0 && m.hp / m.maxHp <= 0.5) {
       m.phase2 = true;
       m.atk = Math.round(m.atk * 1.25);
       m.defv += 4;
       m.abil = null;
-      m.abilCd = 1.2;                       // เข้าเฟส 2 แล้วร่ายทันที
+      m.abilCd = 1.2;
       addFloater(state, m.x, m.y - 42, 'ครูฝึก: โมโหสุด!', '#ff4d4d', 1.4);
       Particles.spawn('burst', m.x, m.y - 12, { count: 30, c: '#ff4d4d' });
       Audio.play('boss');
@@ -639,7 +884,6 @@ export function updateMonsters(state, dt) {
       if (d < 34 && !adminPassive && m.atkCd <= 0) { monsterHitPlayer(state, m); m.atkCd = 1.8; }
       else moveMonster(state, m, m.wanderDir.x * 0.35, m.wanderDir.y * 0.35, dt);
     } else if (m.def.ai === 'erratic') {
-      // ค้างคาวเน็ตหลุด — เปลี่ยนทิศถี่ ๆ เหมือนสัญญาณไม่เสถียร
       m.wanderT -= dt;
       if (m.wanderT <= 0) {
         m.wanderT = 0.3 + Math.random() * 0.45;
@@ -689,7 +933,6 @@ export function updateMonsters(state, dt) {
     }
   }
 
-  // แยกมอนไม่ให้ทับกัน
   for (let i = 0; i < state.monsters.length; i++) {
     const a = state.monsters[i]; if (a.dead) continue;
     for (let j = i + 1; j < state.monsters.length; j++) {
@@ -715,7 +958,6 @@ function updateBossAbility(state, m, dt, distToPlayer) {
     const pool = m.phase2 ? BOSS_ABILITIES_P2 : BOSS_ABILITIES;
     const def = pool.find((x) => x.id === a.id) || pool[0];
     if (a.phase === 'tell') {
-      // ตัวบอสจะยืนนิ่งและขึ้นวงเตือน — ผู้เล่นมีเวลาหลบ
       if (a.t >= def.telegraph) {
         a.phase = 'fire'; a.t = 0;
         fireBossAbility(state, m, def, a);
@@ -736,7 +978,7 @@ function updateBossAbility(state, m, dt, distToPlayer) {
       x: m.x, y: m.y, radius: def.radius || 0, icon: def.icon, name: def.name,
     };
     addFloater(state, m.x, m.y - 38, `${def.icon} ${def.name}`, '#ff9d5c', 1.1);
-    Audio.play(m.phase2 ? 'warn' : 'warn');
+    Audio.play('warn');
     state.onBossCast?.(def);
   }
   return false;
@@ -812,16 +1054,95 @@ export function updateNpcs(state, dt) {
   }
 }
 
-/* ── อัปเดตบอท ── */
+/* ── อัปเดตบอท (รองรับทั้งโหมดเดินเล่น, โหมดปาร์ตี้ช่วยตีมอนจริง, และโหมด PvP สู้กลับ) ── */
 export function updateBots(state, dt) {
   const w = state.world;
+  const p = state.player;
   for (const b of state.bots) {
+    b.prevX = b.x; b.prevY = b.y;
     b.animT += dt;
+    if (b.hitFlash > 0) b.hitFlash = Math.max(0, b.hitFlash - dt);
     if (b.animT > 0.2) { b.animT = 0; b.frame ^= 1; }
     b.chatT -= dt;
+
+    if (b.koT > 0) {
+      b.koT -= dt;
+      if (b.koT <= 0) {
+        const sp = w.randomSpot(Math.random, { awayFrom: p, minDist: 100 });
+        b.x = sp.x; b.y = sp.y; b.prevX = b.x; b.prevY = b.y;
+        b.hp = b.maxHp; b.hostile = false;
+      }
+      continue;
+    }
+
     if (b.afk) continue;
     if (b.atkCd > 0) b.atkCd -= dt;
 
+    // 1) บอทที่อยู่ในปาร์ตี้ของผู้เล่น: เดินตามเจ้าของตี้ และช่วยตีมอนจริง!
+    if (b.inParty && p && !p.dead) {
+      const distP = Math.hypot(p.x - b.x, p.y - b.y);
+      if (distP > 270) {
+        b.x = p.x - p.dir * 20; b.y = p.y + 12;
+        b.prevX = b.x; b.prevY = b.y;
+        Particles.spawn('smoke', b.x, b.y - 6, { count: 4 });
+      }
+      const tgt = (state.targetMonster && !state.targetMonster.dead)
+        ? state.targetMonster
+        : nearestMonster(state, p.x, p.y, 115);
+      if (tgt && distP < 180) {
+        const d = Math.hypot(tgt.x - b.x, tgt.y - b.y);
+        if (d > 26) {
+          const dx = (tgt.x - b.x) / d, dy = (tgt.y - b.y) / d;
+          const sp = 62 * dt;
+          if (!w.solidAtPx(b.x + dx * sp, b.y)) b.x += dx * sp;
+          if (!w.solidAtPx(b.x, b.y + dy * sp)) b.y += dy * sp;
+          b.dir = Math.sign(dx) || b.dir;
+        } else if (b.atkCd <= 0) {
+          b.atkCd = 0.85;
+          const partyAtk = Math.max(4, Math.round(p.atk * 0.45));
+          hitMonster(state, tgt, partyAtk, 2, 1);
+          addEffect(state, 'slash', b.x + (b.dir || 1) * 12, b.y - 6, 0.16, { dir: b.dir });
+          if (b.chatT <= 0) {
+            b.chatT = 16 + Math.random() * 20;
+            const line = PARTY_LINES[Math.floor(Math.random() * PARTY_LINES.length)];
+            addFloater(state, b.x, b.y - 24, line, '#e8a3ff', 0.8);
+          }
+        }
+      } else if (distP > 38) {
+        const dx = (p.x - b.x) / distP, dy = (p.y - b.y) / distP;
+        const sp = 64 * dt;
+        if (!w.solidAtPx(b.x + dx * sp, b.y)) b.x += dx * sp;
+        if (!w.solidAtPx(b.x, b.y + dy * sp)) b.y += dy * sp;
+        b.dir = Math.sign(dx) || b.dir;
+      }
+      continue;
+    }
+
+    // 2) บอทที่เป็นศัตรูในโหมด PvP (PK Mode)
+    if (state.pvpMode && b.hostile && p && !p.dead) {
+      const d = Math.hypot(p.x - b.x, p.y - b.y);
+      if (d > 220) {
+        b.hostile = false;
+      } else if (d > 26) {
+        const dx = (p.x - b.x) / d, dy = (p.y - b.y) / d;
+        const sp = 56 * dt;
+        if (!w.solidAtPx(b.x + dx * sp, b.y)) b.x += dx * sp;
+        if (!w.solidAtPx(b.x, b.y + dy * sp)) b.y += dy * sp;
+        b.dir = Math.sign(dx) || b.dir;
+        continue;
+      } else if (b.atkCd <= 0) {
+        b.atkCd = 1.25;
+        const { dmg } = rollDamage(b.atk || 10, p.def, 0, 0.85);
+        p.hp = Math.max(1, p.hp - dmg); // บอทตีประลองไม่ถึงตายคาที่ (เหลือ 1 HP)
+        p.hitFlash = 0.12;
+        addFloater(state, p.x, p.y - 22, `-${dmg} (PK)`, '#ff6b6b', 0.95);
+        addEffect(state, 'slash', b.x + (b.dir || 1) * 12, b.y - 6, 0.16, { dir: b.dir });
+        Audio.play('hurt');
+        continue;
+      }
+    }
+
+    // 3) พฤติกรรมปกติของบอท
     const tgt = nearestMonster(state, b.x, b.y, 120);
     if (tgt && tgt.def.ai !== 'none') {
       const d = Math.hypot(tgt.x - b.x, tgt.y - b.y);
@@ -834,7 +1155,6 @@ export function updateBots(state, dt) {
         b.dir = dx || b.dir;
       } else if (b.atkCd <= 0) {
         b.atkCd = 0.9 + Math.random() * 0.6;
-        // บอทตีมอนแบบหลอก ๆ (ไม่ฆ่าจริง เพื่อไม่ให้แย่ง EXP ผู้เล่น)
         tgt.hitFlash = 0.1;
         addFloater(state, tgt.x, tgt.y - 14, String(3 + Math.floor(Math.random() * 9)), '#c9d2ee', 0.8);
         addEffect(state, 'slash', b.x + (b.dir || 1) * 12, b.y - 6, 0.16, { dir: b.dir });
@@ -861,7 +1181,7 @@ export function updateDrops(state, dt) {
     d.t += dt;
     d.bob += dt * 4;
     const dist = Math.hypot(d.x - p.x, d.y - p.y);
-    if (dist < 22) {                       // ดูดเข้าหาตัว
+    if (dist < 22) {
       d.x += (p.x - d.x) * Math.min(1, dt * 6);
       d.y += (p.y - d.y) * Math.min(1, dt * 6);
     }
@@ -903,37 +1223,31 @@ export function updatePlayer(state, dt, input) {
   p.ctr.playtime = (p.ctr.playtime || 0) + dt;
   if (p.gold > (p.maxGold || 0)) p.maxGold = Math.floor(p.gold);
 
-  // คูลดาวน์
   for (const k of Object.keys(p.cooldowns)) {
     if (p.cooldowns[k] > 0) p.cooldowns[k] = Math.max(0, p.cooldowns[k] - dt);
   }
   if (p.attackCd > 0) p.attackCd -= dt;
 
-  // บัฟ
   const bl = p.buffs;
   for (let i = 0; i < bl.length; i++) bl[i].t -= dt;
   compact(bl, (b) => b.t > 0);
 
-  // ฟื้นเลือด/มานา ช้า ๆ
   p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.006 * dt);
   p.mp = Math.min(p.maxMp, p.mp + p.maxMp * 0.02 * dt);
 
-  // การเคลื่อนที่
   let dx = 0, dy = 0;
   if (input.keys.has('w') || input.keys.has('arrowup')) dy -= 1;
   if (input.keys.has('s') || input.keys.has('arrowdown')) dy += 1;
   if (input.keys.has('a') || input.keys.has('arrowleft')) dx -= 1;
   if (input.keys.has('d') || input.keys.has('arrowright')) dx += 1;
-  // จอยเสมือน (มือถือ) — รวมเข้ากับทางเดียวกันกับ WASD
   const mv = input.moveVec;
   if (mv && (mv.x || mv.y)) { dx += mv.x; dy += mv.y; }
   const moving = !!(dx || dy);
   if (moving) {
     p.ctr.idle = 0;
-    p.path = null; p.pathIdx = 0;        // กดปุ่มเดินเอง = ยกเลิกการเดินอัตโนมัติ
+    p.path = null; p.pathIdx = 0;
     const len = Math.hypot(dx, dy);
     let sp = effSpd(p) * dt;
-    // เด็กเน็ตคาเฟ่: กระตุกสุ่ม
     if (p.clsId === 'cafe' && Math.random() < 0.012) sp = 0;
     const nx = p.x + (dx / len) * sp;
     const ny = p.y + (dy / len) * sp;
@@ -943,12 +1257,10 @@ export function updatePlayer(state, dt, input) {
     p.ctr.distance = (p.ctr.distance || 0) + Math.hypot(p.x - ox, p.y - oy);
     if (dx) p.dir = Math.sign(dx);
     if (p.animT > 0.16) { p.animT = 0; p.frame ^= 1; }
-    // ฝุ่นตอนเดิน
     if (Math.random() < 0.09) {
       Particles.spawn('dust', p.x - p.dir * 4, p.y - 1, { count: 1 });
     }
   } else if (p.path && p.path.length) {
-    // ── เดินตามเส้นทางที่คำนวณจากคลิกเมาส์ ──
     p.ctr.idle = 0;
     followPath(state, p, dt);
   } else {
@@ -957,12 +1269,10 @@ export function updatePlayer(state, dt, input) {
     if (p.ctr.idle > (p.ctr.idleBest || 0)) p.ctr.idleBest = p.ctr.idle;
   }
 
-  // ขอบแผนที่
   const W = state.world.w * CONFIG.TILE, H = state.world.h * CONFIG.TILE;
   p.x = Math.max(CONFIG.TILE, Math.min(W - CONFIG.TILE, p.x));
   p.y = Math.max(CONFIG.TILE, Math.min(H - CONFIG.TILE, p.y));
 }
 
-/* ── เลือกอาชีพสำหรับแสดงผล ── */
 export function playerSpriteId(p) { return 'hero_' + p.clsId; }
 export function classById(id) { return CLASSES.find((c) => c.id === id); }

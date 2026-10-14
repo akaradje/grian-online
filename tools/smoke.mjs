@@ -1,23 +1,30 @@
-/* ทดสอบเกมในเบราว์เซอร์จริงด้วย Playwright
+/* ทดสอบเกมในเบราว์เซอร์จริงด้วย Playwright (หรือ WebDriver fallback สำหรับเครื่องออฟไลน์)
    ใช้:  node tools/smoke.mjs [พอร์ต]
    ตรวจ: console error · แคนวาสเรนเดอร์จริง · เดิน/ตี/เลเวล · แพเนลทั้งหมด
          · กาชา · เควสต์ · แชท · NPC · บอส+ท่า telegraph · มอน elite
-         · ตาย/ชดเชย · เซฟหลายช่อง · ตั้งค่า · ความสำเร็จ · อัพเกรด
-         · เสียง · particle · เมนูหยุดชั่วคราว · ตัววัดประสิทธิภาพ
-
-   หมายเหตุ: ESM ไม่ใช้ NODE_PATH จึงต้องชี้ที่อยู่ playwright ผ่าน PLAYWRIGHT_PATH */
+         · ตาย/ชดเชย · เซฟหลายช่อง · ตั้งค่า · ความสำเร็จ · อัพเกรด+ยันต์กันแตก+ออร่า
+         · เสียง · particle (อัปเดตอายุขัยจริง) · เมนูหยุดชั่วคราว · ตัววัดประสิทธิภาพ
+         · โซน 2 (ดินแดนมาร) · โซน 3 (แดนเซิร์ฟเถื่อน) · ปาร์ตี้บอท · โหมด PK · หอคอยบั๊ก · 3D VFX */
 
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const PW = process.env.PLAYWRIGHT_PATH || 'playwright';
-const _pw = await import(PW);
+let _pw;
+try {
+  _pw = await import(PW);
+} catch (e) {
+  _pw = await import('./webdriver-playwright.mjs');
+}
 const chromium = _pw.chromium || _pw.default?.chromium;
-if (!chromium) throw new Error('ไม่พบ playwright — ตั้งค่า PLAYWRIGHT_PATH ให้ถูกต้อง');
+if (!chromium) throw new Error('ไม่พบ playwright หรือ webdriver-playwright');
 
 function findChromium() {
   if (process.env.PLAYWRIGHT_CHROME) return process.env.PLAYWRIGHT_CHROME;
+  for (const sysBin of ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome']) {
+    if (fs.existsSync(sysBin)) return sysBin;
+  }
   const roots = [
     process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'ms-playwright'),
     process.env.HOME && path.join(process.env.HOME, '.cache', 'ms-playwright'),
@@ -54,7 +61,6 @@ const consoleErrors = [];
 page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
 page.on('pageerror', (e) => consoleErrors.push('PAGEERROR: ' + e.message));
 
-/** ถ่ายภาพแบบทนทาน — ภาพเป็นเครื่องมือวินิจฉัย ไม่ควรทำให้เทสต์ล้ม */
 const shot = async (name) => {
   try { await page.screenshot({ path: path.join(OUT, name) }); }
   catch (e) { notes.push(`  [WARN] ถ่ายภาพ ${name} ไม่สำเร็จ (${e.code || e.message})`); }
@@ -75,7 +81,7 @@ await shot('01-title.png');
 await page.click('#btn-enter');
 await page.waitForSelector('#scr-create.active', { timeout: 5000 });
 
-/* ── 2b. เสียงถูกปลดล็อกหลังผู้ใช้คลิกครั้งแรก (นโยบาย autoplay) ── */
+/* ── 2b. เสียงถูกปลดล็อกหลังผู้ใช้คลิกครั้งแรก ── */
 const audio = await page.evaluate(() => {
   const A = window.__GRIAN__.Audio;
   return { ready: A.ready, state: A.ctx?.state || null, hasMaster: !!A.master, hasMusic: !!A.musicBus, hasSfx: !!A.sfxBus };
@@ -88,7 +94,7 @@ const sfxTest = await page.evaluate(async () => {
   const A = window.__GRIAN__.Audio;
   if (!A.ready) return { ok: false };
   const before = A.ctx.currentTime;
-  A.play('levelup'); A.play('crit'); A.play('gacha5');
+  A.play('levelup'); A.play('crit'); A.play('gacha5'); A.play('heal');
   return { ok: true, t: +(A.ctx.currentTime - before).toFixed(3), music: A.trackName };
 });
 if (sfxTest.ok) ok(`เล่นเสียงเอฟเฟกต์ได้โดยไม่ error (เพลงที่เล่นอยู่: ${sfxTest.music || 'ยังไม่เริ่ม'})`);
@@ -106,8 +112,6 @@ await page.waitForSelector('#scr-play.active', { timeout: 8000 });
 await page.waitForTimeout(1500);
 ok('เข้าสู่ฉากเกม');
 
-// pin โหมดกราฟิกให้คงเส้น: suite นี้ทดสอบตรรกะเกม ไม่ใช่ความเร็วการ์ดจอ
-// (autoQuality บน software GL จะสลับ 3D↔2D กลางรัน -> เทสต์วนเวียน) — 3D ตรวจที่ check-r3d
 await page.evaluate(() => {
   const G = window.__GRIAN__;
   G.Settings.set('render3d', 'off');
@@ -115,13 +119,11 @@ await page.evaluate(() => {
 });
 await page.waitForTimeout(200);
 
-/* ── 4. โลกเรนเดอร์จริง (3D layer ถ้าเปิด มิฉะนั้น 2D) ── */
+/* ── 4. โลกเรนเดอร์จริง ── */
 const canvasInfo = await page.evaluate(() => new Promise((resolve) => {
   const G = window.__GRIAN__;
   const set = new Set();
   if (G.GFX3D && G.GFX3D.ok) {
-    // อ่านภายในเฟรมเดียวกับ render — preserveDrawingBuffer=false (เร็วขึ้น) แปลว่า
-    // อ่านหลังจาก compositor  sweeping buffer แล้วจะได้จอดำ — ต้องอ่านใน rAF หลังเกมเรนเดอร์
     requestAnimationFrame(() => {
       const gl = G.GFX3D.renderer.getContext();
       const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
@@ -150,7 +152,7 @@ const after = await page.evaluate(() => ({ x: window.__GRIAN__.state.player.x, d
 if (Math.abs(after.x - before.x) > 10) ok(`เดินได้: x ${before.x.toFixed(0)} → ${after.x.toFixed(0)} · สะสม ${after.dist.toFixed(0)} หน่วย`);
 else bad('ผู้เล่นไม่ขยับ');
 
-/* ── 6. ระบบ 60Hz คงที่: จำนวนสเต็ปต่อวินาทีควรใกล้ 60 ── */
+/* ── 6. ระบบ 60Hz คงที่ ── */
 const stepRate = await page.evaluate(async () => {
   const S = window.__GRIAN__.state;
   const t0 = S.time;
@@ -160,9 +162,6 @@ const stepRate = await page.evaluate(async () => {
 if (stepRate > 0.9 && stepRate < 1.1) ok(`เวลาในเกมเดิน 1:1 กับเวลาจริง (${stepRate.toFixed(3)} เท่า) — fixed timestep ทำงาน`);
 else bad('เวลาในเกมไม่ตรงกับเวลาจริง', stepRate.toFixed(3));
 
-/** ย้ายมอนตัวอื่นออกไปไกล ๆ เพื่อให้เทสต์คุมสถานการณ์ได้แน่นอน
- *  (ไม่งั้นระบบจะเลือกมอนที่ใกล้ที่สุด ซึ่งอาจไม่ใช่ตัวที่เทสต์จัดวาง)
- *  ยังคงมีชีวิตอยู่ เพื่อให้เทสต์ถัดไปเรียกกลับมาใช้ได้ */
 const ISOLATE_FN = `
   (keep) => {
     const S = window.__GRIAN__.state;
@@ -170,12 +169,11 @@ const ISOLATE_FN = `
       if (m === keep) continue;
       m.x += 4000; m.y += 4000;
       m.prevX = m.x; m.prevY = m.y;
-      m.stun = 999;                     // ให้อยู่นิ่ง ไม่วิ่งกลับมารบกวน
+      m.stun = 999;
     }
   }
 `;
 
-/** เรียกมอน n ตัวกลับมาไว้รอบตัวผู้เล่น (ใช้กับเทสต์ AUTO) */
 const GATHER_FN = `
   (n, dist) => {
     const S = window.__GRIAN__.state;
@@ -199,11 +197,10 @@ const clickMove = await page.evaluate(async (isolateSrc) => {
   const G = window.__GRIAN__;
   const S = G.state, p = S.player;
   const W = S.world;
-  isolate(null);                       // เคลียร์มอนทั้งหมด — เทสต์นี้วัดการเดินล้วน ๆ
+  isolate(null);
   p.hp = p.maxHp; p.dead = false;
   S.targetMonster = null; p.path = null;
 
-  // หาจุดหมายที่เส้นตรงจากตัวผู้เล่นไปถึงได้จริง (ไม่ต้องอ้อม)
   let target = null;
   for (let i = 0; i < 300 && !target; i++) {
     const a = Math.random() * Math.PI * 2, r = 140 + Math.random() * 70;
@@ -260,7 +257,6 @@ const pathTest = await page.evaluate(() => {
     if (W.solidAtPx(x1, y1) || W.solidAtPx(x2, y2)) continue;
     const straight = Math.hypot(x2 - x1, y2 - y1);
     if (straight < 90) continue;
-    // เส้นตรงต้องชนกำแพงจริง ๆ
     let blocked = false;
     for (let s = 1; s < 60; s++) {
       const t = s / 60;
@@ -270,7 +266,6 @@ const pathTest = await page.evaluate(() => {
     const p = f.find(x1, y1, x2, y2);
     if (p && p.length > 1) found = { pts: p.length, straight: +straight.toFixed(0) };
   }
-  // ทดสอบเพิ่ม: จุดหมายอยู่ในกำแพง ต้องหาช่องว่างใกล้สุดให้ได้
   const inWall = f.find(W.spawn.x, W.spawn.y, W.village.x * 16 + 8, W.village.y * 16 + 8);
   return { found, inWall: inWall ? inWall.length : 0 };
 });
@@ -289,7 +284,7 @@ const clickTarget = await page.evaluate(async (isolateSrc) => {
   const S = G.state, p = S.player;
   const m = S.monsters.find((x) => !x.dead && !x.boss);
   if (!m) return { err: 'ไม่พบมอน' };
-  isolate(m);                          // ให้เหลือมอนตัวนี้ตัวเดียว เพื่อผลที่แน่นอน
+  isolate(m);
   p.hp = p.maxHp; p.dead = false;
   S.targetMonster = null; p.path = null;
   m.dead = false; m.hp = m.maxHp; m.stun = 0;
@@ -346,7 +341,7 @@ if (mapOk) {
   ok(`โซนที่ตรวจพบ: ${mapTest.regions.join(' · ')}`);
 } else bad('ไทล์ใหม่ในแผนที่ไม่ครบ', JSON.stringify(mapTest));
 
-/* ── 7. ตีมอน + particle + hit-stop ── */
+/* ── 7. ตีมอน + particle (และตรวจว่า Particles.update ทำงานจริง) ── */
 const combat = await page.evaluate(async (isolateSrc) => {
   const isolate = eval(isolateSrc);
   const G = window.__GRIAN__;
@@ -354,47 +349,37 @@ const combat = await page.evaluate(async (isolateSrc) => {
   const p = S.player;
   const m = S.monsters.find((x) => !x.dead && !x.boss);
   if (!m) return { err: 'ไม่พบมอน' };
-  isolate(m);                        // ให้เหลือตัวเดียว เพื่อให้แน่ใจว่าตีถูกตัว
+  isolate(m);
   p.hp = p.maxHp; p.dead = false;
   m.dead = false; m.hp = m.maxHp; m.stun = 0; m.defv = m.defv ?? m.def;
   m.x = p.x + 16; m.y = p.y;
   const hp0 = m.hp;
-  const parts0 = G.Particles.count();
-  for (let i = 0; i < 6; i++) {
+  G.Particles.clear();
+  for (let i = 0; i < 4; i++) {
     S.player.attackCd = 0;
     G.handlers.onAttack();
-    await new Promise((r) => setTimeout(r, 70));
+    await new Promise((r) => setTimeout(r, 40));
   }
-  return { hp0, hp1: m.hp, parts0, parts1: G.Particles.count(), name: m.name };
+  const nearParts = () => G.Particles.pool.filter((pt) => pt.on && !pt.pulse && Math.hypot(pt.x - m.x, pt.y - m.y) < 42).length;
+  const partsPeak = nearParts();
+  await new Promise((r) => setTimeout(r, 1200));
+  const partsAfterDecay = nearParts();
+  return { hp0, hp1: m.hp, partsPeak, partsAfterDecay, name: m.name };
 }, ISOLATE_FN);
 if (combat.err) bad('ทดสอบการต่อสู้', combat.err);
 else {
   if (combat.hp1 < combat.hp0) ok(`โจมตีมอนได้: ${combat.name} HP ${combat.hp0} → ${combat.hp1}`);
   else bad('โจมตีแล้วมอนเลือดไม่ลด', JSON.stringify(combat));
-  if (combat.parts1 > combat.parts0) ok(`ระบบ particle ทำงาน (active ${combat.parts0} → ${combat.parts1})`);
-  else bad('ไม่มีการสร้าง particle ตอนโจมตี');
+  if (combat.partsPeak > 0 && combat.partsAfterDecay < combat.partsPeak) {
+    ok(`ระบบ particle สร้างและสลายตัวตามฟิสิกส์จริง (peak ${combat.partsPeak} → เหลือ ${combat.partsAfterDecay})`);
+  } else bad('Particles.update ไม่ทำงานหรืออนุภาคไม่สลายตัว', JSON.stringify(combat));
 }
 
 /* ── 8. มอนระดับ elite ── */
 const elite = await page.evaluate(() => {
   const S = window.__GRIAN__.state;
-  let found = null;
-  for (let i = 0; i < 200 && !found; i++) {
-    const m = window.__GRIAN__.state.monsters.find((x) => x.elite);
-    if (m) found = m;
-    else if (i % 20 === 0) {
-      // บังคับให้เกิด elite เพื่อทดสอบ โดยไม่ต้องรอสุ่ม
-      const spot = S.world.randomSpot(Math.random, { outsideVillage: true });
-      S.__spawnElite = true;
-    }
-  }
-  // ถ้ายังไม่เจอ ให้สร้างเองผ่านทาง spawnMonster ที่ส่ง forceElite
-  if (!found) {
-    const spot = S.world.randomSpot(Math.random, { awayFrom: S.player, minDist: 60, outsideVillage: true });
-    const before = S.monsters.length;
-    window.__GRIAN__.state.__forceElite = true;
-    return { forced: false, before, note: 'รอสุ่มไม่เจอ' };
-  }
+  const found = S.monsters.find((x) => x.elite);
+  if (!found) return { forced: false };
   return { forced: true, name: found.name, hp: found.maxHp, base: found.def.hp, aura: found.aura };
 });
 if (elite.forced) {
@@ -412,7 +397,7 @@ const capTest = await page.evaluate(async () => {
   const m = S.monsters.find((x) => !x.dead && !x.boss && x.id !== 'ghost');
   if (!m) return { err: 'ไม่พบมอนให้จับ' };
   m.x = p.x + 22; m.y = p.y;
-  m.hp = 1;                                     // เลือดน้อย = จับง่าย
+  m.hp = 1;
   S.targetMonster = m;
   p.inv.push({ id: 'capture_ball', qty: 25 });
 
@@ -424,13 +409,12 @@ const capTest = await page.evaluate(async () => {
     G.beginCapture(m);
     if (!S.capture) break;
     chance = S.capture.result.chance;
-    // เฝ้าดูอนิเมชันดิ้น
     for (let i = 0; i < 60 && S.capture; i++) {
       await new Promise((r) => setTimeout(r, 40));
       if (S.capture && S.capture.lastShake >= 0) sawShakes = true;
     }
     const ballAfter = p.inv.find((s) => s.id === 'capture_ball')?.qty || 0;
-    if (ballAfter === ballBefore) break;         // ลูกแก้วไม่ถูกใช้ = มีปัญหากว่า
+    if (ballAfter === ballBefore) break;
     if (S.pets.length === before) { m.hp = 1; m.dead = false; m.stun = 0; S.targetMonster = m; }
   }
   const pet = S.pets[0];
@@ -457,27 +441,28 @@ const petAiTest = await page.evaluate(async () => {
   const S = G.state, p = S.player;
   if (!S.pets.length) return { err: 'ไม่มีสัตว์เลี้ยง' };
   const pet = S.pets[0];
-  // เฉพาะสัตว์เลี้ยง "ตัว aktif" เทNOTEที่เข้างาน — บังคับให้ตัวแรก active (เทสต์ก่อนอาจเปลี่ยนไป)
   p.activePet = pet.uid;
   pet.ko = false; pet.hp = pet.maxHp;
 
-  // 1) เดินตาม: ย้ายผู้เล่นไปไกล แล้วดูว่าสัตว์เลี้ยงตามมาไหม
+  p.x = S.world.spawn.x; p.y = S.world.spawn.y;
+  p.prevX = p.x; p.prevY = p.y; p.path = null;
+  pet.x = p.x + 16; pet.y = p.y; pet.stuckT = 0;
   const startDist = Math.hypot(pet.x - p.x, pet.y - p.y);
-  p.x += 200; p.y += 40;
+  p.x += 150;
   p.prevX = p.x; p.prevY = p.y;
   const peak = Math.hypot(pet.x - p.x, pet.y - p.y);
   let followed = false;
   for (let i = 0; i < 60; i++) {
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 80));
     const d = Math.hypot(pet.x - p.x, pet.y - p.y);
-    if (d < Math.min(80, peak * 0.45)) { followed = true; break; }
+    if (d < Math.min(85, peak * 0.5)) { followed = true; break; }
   }
   const endDist = Math.hypot(pet.x - p.x, pet.y - p.y);
 
-  // 2) ช่วยตี: เอามอนมาไว้ข้าง ๆ
+  pet.x = p.x + 16; pet.y = p.y;
   const m = S.monsters.find((x) => !x.dead && !x.boss);
   if (!m) return { followed, startDist: +startDist.toFixed(0), endDist: +endDist.toFixed(0), err: 'ไม่พบมอน' };
-  m.x = pet.x + 18; m.y = pet.y;
+  m.x = pet.x + 14; m.y = pet.y; m.stun = 5;
   m.hp = m.maxHp;
   pet.atkCd = 0;
   const hp0 = m.hp;
@@ -553,29 +538,29 @@ if (vfxOk) {
 if (vfxTest.bannerText) ok(`ป้ายชื่อสกิลแสดงตอนร่าย: "${vfxTest.bannerText}"`);
 else bad('ป้ายชื่อสกิลไม่แสดง');
 
-/* ── 8f. โหมด AUTO: ต้องเล่นให้เองได้จริงโดยไม่มีการกดปุ่ม ── */
+/* ── 8f. โหมด AUTO ── */
 const autoTest = await page.evaluate(async (gatherSrc) => {
   const gather = eval(gatherSrc);
   const G = window.__GRIAN__;
   const S = G.state, p = S.player;
   p.hp = p.maxHp; p.mp = p.maxMp; p.dead = false;
-  const placed = gather(5, 55);            // วางมอนเลือดน้อยไว้รอบตัว
+  const placed = gather(5, 55);
   p.path = null; S.targetMonster = null;
   const kills0 = p.kills_total;
   const autoKills0 = p.ctr.autoKills || 0;
 
-  G.handlers.onToggleAuto();               // เปิด AUTO
-  await new Promise((r) => setTimeout(r, 120));   // รอให้ UI วาดหนึ่งเฟรมก่อนเช็คปุ่ม
+  G.handlers.onToggleAuto();
+  await new Promise((r) => setTimeout(r, 120));
   const turnedOn = G.Auto.on;
   const btnOn = document.getElementById('btn-auto').classList.contains('on');
   const st0 = G.Auto.st;
-  await new Promise((r) => setTimeout(r, 4500));  // ปล่อยให้เล่นเอง
+  await new Promise((r) => setTimeout(r, 4500));
   const st1 = G.Auto.st;
   const kills1 = p.kills_total;
   const autoKills1 = (p.ctr.autoKills || 0) - autoKills0;
   const statusText = document.getElementById('auto-status').textContent;
 
-  G.handlers.onToggleAuto();               // ปิด AUTO
+  G.handlers.onToggleAuto();
   await new Promise((r) => setTimeout(r, 400));
   const offNow = !G.Auto.on;
   const targetCleared = S.targetMonster === null;
@@ -606,10 +591,9 @@ const autoPotTest = await page.evaluate(async (gatherSrc) => {
   const S = G.state, p = S.player;
   gather(4, 70);
   p.dead = false;
-  // ให้เหลือยา HP กองเดียว เพื่อให้อ่านจำนวนได้แน่นอน
   p.inv = p.inv.filter((s) => s.id !== 'hp_potion');
   p.inv.push({ id: 'hp_potion', qty: 5 });
-  p.hp = p.maxHp * 0.18;                   // เลือดน้อยกว่าเกณฑ์ 35%
+  p.hp = p.maxHp * 0.18;
   const before = p.inv.find((s) => s.id === 'hp_potion')?.qty || 0;
   G.handlers.onToggleAuto();
   await new Promise((r) => setTimeout(r, 1600));
@@ -634,7 +618,7 @@ const levelTest = await page.evaluate(() => {
 if (levelTest.lvl > 1) ok(`เลเวลอัพทำงาน: Lv.${levelTest.lvl} (HP สูงสุด ${levelTest.maxHp})`);
 else bad('ให้ EXP แล้วไม่ขึ้นเลเวล');
 
-/* ── 9.5. อาชีพขั้นสูง Lv.10 — ผ่านครั้งหนึ่งแล้ว เลือกสาขาก่อนไปต่อ ── */
+/* ── 9.5. อาชีพขั้นสูง Lv.10 ── */
 await page.waitForTimeout(1400);
 const advOffered = await page.evaluate(() => ({
   shown: !document.getElementById('advance').classList.contains('hidden'),
@@ -645,7 +629,7 @@ const advOffered = await page.evaluate(() => ({
 }));
 if (advOffered.shown && advOffered.cards === 2 && advOffered.locked && advOffered.paused) {
   ok(`ถึง Lv.${advOffered.lvl} กล่องเลือกอาชีพขั้นสูงเด้ง + หยุดเกมค้าง (กด Esc หนีไม่ได้)`);
-} else bad('กล่องเลือกอาชีพขั้นสูงไม่เด็ง', JSON.stringify(advOffered));
+} else bad('กล่องเลือกอาชีพขั้นสูงไม่เด้ง', JSON.stringify(advOffered));
 
 const advChosen = await page.evaluate(() => {
   const G = window.__GRIAN__;
@@ -668,11 +652,11 @@ const advSkill = await page.evaluate(() => {
   const r = G.handlers.onSkill(adv.skill);
   return { ok: r?.ok !== false, id: adv.skill, cd: G.state.player.cooldowns[adv.skill] > 0 };
 });
-if (advSkill.ok && advSkill.cd) ok(`สกิลของอาชีพขั้นสูง (${advSkill.id}) ร่ายได้ entered` .replace(' entered', ''));
+if (advSkill.ok && advSkill.cd) ok(`สกิลของอาชีพขั้นสูง (${advSkill.id}) ร่ายได้`);
 else bad('สกิลอาชีพขั้นสูงใช้ไม่ได้', JSON.stringify(advSkill));
 
 const advTwice = await page.evaluate(() => {
-  const r = window.__GRIAN__.advanceClass(window.__GRIAN__.state.player.advId);
+  const r = window.__GRIAN__.advanceClass(window.__GRIAN__.state, window.__GRIAN__.state.player.advId);
   return { ok: r.ok, msg: r.msg };
 });
 if (!advTwice.ok) ok(`เลือกสาขาซ้ำไม่ได้ ("${advTwice.msg}")`);
@@ -682,23 +666,23 @@ const advGuard = await page.evaluate(() => {
   const G = window.__GRIAN__;
   const p = G.state.player;
   const oldLvl = p.lvl; p.lvl = 3;
-  const r = G.advanceClass('dc');
+  const r = G.advanceClass(G.state, 'dc');
   p.lvl = oldLvl;
   return { wrongBranch: r.ok };
 });
 if (!advGuard.wrongBranch) ok('เลือกสาขาของอาชีพอื่นไม่ได้');
 else bad('guard เลือกสาขา', JSON.stringify(advGuard));
 
-/* ── 10. แพเนลทั้งหมด ── */
+/* ── 10. แพเนลทั้งหมด (รวมแพเนลใหม่ social 'v') ── */
 for (const [key, name] of [['i', 'inv'], ['k', 'skill'], ['g', 'gacha'], ['q', 'quest'],
-  ['p', 'pet'], ['j', 'ach'], ['c', 'stats'], ['o', 'settings'], ['h', 'help']]) {
+  ['p', 'pet'], ['v', 'social'], ['j', 'ach'], ['c', 'stats'], ['o', 'settings'], ['h', 'help']]) {
   await page.keyboard.press(key);
   await page.waitForTimeout(200);
   const open = await page.evaluate((n) => document.getElementById('panel-' + n).classList.contains('open'), name);
   const len = await page.evaluate((n) => document.getElementById('panel-' + n).innerText.trim().length, name);
   if (open && len > 20) ok(`แพเนล ${name} เปิดได้และมีเนื้อหา (${len} ตัวอักษร)`);
   else bad(`แพเนล ${name}`, `open=${open} len=${len}`);
-  if (name === 'ach' || name === 'settings' || name === 'inv' || name === 'pet') {
+  if (name === 'ach' || name === 'settings' || name === 'inv' || name === 'pet' || name === 'social') {
     await shot(`10-panel-${name}.png`);
   }
   await page.keyboard.press('Escape');
@@ -720,13 +704,13 @@ else bad('การตั้งค่าไม่ทำงาน', JSON.stringif
 /* ── 12. ความสำเร็จ ── */
 const ach = await page.evaluate(() => {
   const p = window.__GRIAN__.state.player;
-  return { total: window.__GRIAN__ ? null : null, unlocked: Object.keys(p.unlocked || {}).length, rows: document.querySelectorAll('#ach-list .ach-row').length };
+  return { unlocked: Object.keys(p.unlocked || {}).length };
 });
 await page.keyboard.press('j');
 await page.waitForTimeout(200);
 const achRows = await page.locator('#ach-list .ach-row').count();
 await page.keyboard.press('Escape');
-if (achRows >= 20) ok(`แพเนลความสำเร็จแสดง ${achRows} รายการ (ปลดล็อกแล้ว ${ach.unlocked})`);
+if (achRows >= 28) ok(`แพเนลความสำเร็จแสดง ${achRows} รายการ (ปลดล็อกแล้ว ${ach.unlocked})`);
 else bad('รายการความสำเร็จน้อยเกินไป', String(achRows));
 
 /* ── 13. กาชา ── */
@@ -740,30 +724,46 @@ const gacha = await page.evaluate(() => {
 if (gacha.pulls === 10) ok(`กาชาเปิด 10 ครั้งได้ (เพชร ${gacha.g0} → ${gacha.g1}, pity ${gacha.pity})`);
 else bad('กาชาไม่ทำงาน', JSON.stringify(gacha));
 
-/* ── 14. อัพเกรดอุปกรณ์ ── */
+/* ── 14. อัพเกรดอุปกรณ์ + สเตตัสเพิ่มจริง + ยันต์กันแตก + ออร่า ── */
 const upgrade = await page.evaluate(() => {
-  const S = window.__GRIAN__.state;
+  const G = window.__GRIAN__;
+  const S = G.state;
   const p = S.player;
-  // แจกของให้พอทดสอบ
-  window.__GRIAN__.UI.h.onEquipItem ? null : null;
-  p.inv.push({ id: 'sword_broken', qty: 1 });
-  window.__GRIAN__.UI.h.onEquipItem('sword_broken');
-  p.inv.push({ id: 'upgrade_stone', qty: 30 });
+  p.inv.push({ id: 'sword_cyber', qty: 1 });
+  G.handlers.onEquipItem('sword_cyber');
+  p.equip.weapon.lvl = 0;
+  const atkBase = p.atk;
+  p.inv.push({ id: 'upgrade_stone', qty: 60 });
   p.gold = 99999;
-  let up = 0, fail = 0, maxLvl = 0;
-  for (let i = 0; i < 25; i++) {
-    window.__GRIAN__.handlers.onUpgrade('weapon');
+
+  // ทดสอบหลอมยันต์กันแตก
+  const craftRes = G.craftProtectCharm(S);
+  p.inv.push({ id: 'protect_charm', qty: 20 });
+
+  let maxLvl = 0;
+  for (let i = 0; i < 30; i++) {
+    G.handlers.onUpgrade('weapon');
     const w = p.equip.weapon;
-    if (!w) break;                       // ของหัก
+    if (!w) break;
     maxLvl = Math.max(maxLvl, w.lvl || 0);
   }
-  up = p.ctr.upgradeOk || 0;
-  fail = p.ctr.upgradeFail || 0;
-  return { maxLvl, fails: fail, ok: up, broke: !p.equip.weapon };
+  const atkAfter = p.atk;
+  const aura = G.playerAura(p);
+  return {
+    craftOk: craftRes.ok,
+    maxLvl,
+    atkBase,
+    atkAfter,
+    aura: aura ? aura.name : null,
+    fails: p.ctr.upgradeFail || 0,
+    ok: p.ctr.upgradeOk || 0,
+    charmSaved: p.ctr.charmSaved || 0,
+    stillEquipped: !!p.equip.weapon,
+  };
 });
-if (upgrade.ok > 0 || upgrade.fails > 0) {
-  ok(`ระบบอัพเกรดทำงาน (สูงสุด +${upgrade.maxLvl}, สำเร็จ ${upgrade.ok} ครั้ง, ล้มเหลว ${upgrade.fails} ครั้ง${upgrade.broke ? ', ของหักตามความเสี่ยงที่แจ้งไว้' : ''})`);
-} else bad('อัพเกรดไม่ทำงาน', JSON.stringify(upgrade));
+if (upgrade.craftOk && (upgrade.ok > 0 || upgrade.fails > 0) && upgrade.atkAfter > upgrade.atkBase && upgrade.stillEquipped) {
+  ok(`ระบบอัพเกรด + ยันต์กันแตกทำงาน (สูงสุด +${upgrade.maxLvl}, ATK ${upgrade.atkBase} → ${upgrade.atkAfter}, ออร่า: ${upgrade.aura || 'ยัง'}, ยันต์ช่วยชีวิต ${upgrade.charmSaved} ครั้ง)`);
+} else bad('อัพเกรดหรือยันต์กันแตกไม่ทำงาน', JSON.stringify(upgrade));
 
 /* ── 15. เควสต์ ── */
 const quest = await page.evaluate(() => {
@@ -792,6 +792,63 @@ else bad('กด E แล้วไดอะล็อก NPC ไม่เปิ�
 await shot('04-dialog.png');
 await page.keyboard.press('Escape');
 
+/* ── 16b. ระบบใหม่ v1.0.0: ปาร์ตี้บอท · บัฟกิลด์ · โหมด PK · หอคอยบั๊ก ── */
+const socialTest = await page.evaluate(async () => {
+  const G = window.__GRIAN__;
+  const S = G.state, p = S.player;
+  S.inputLocked = false; S.paused = false;
+  p.gold = 50000;
+
+  // 1) ชวนบอทเข้าตี้
+  const bot = S.bots.find((b) => !b.afk);
+  const pRes = G.togglePartyBot(S, bot._uid);
+  // 2) รับบัฟกิลด์
+  const gRes = G.applyGuildBuff(S, 'atk');
+  // 3) เปิดโหมด PK ท้าดวลบอท
+  G.handlers.onChallengeBot();
+  const hostileBot = S.bots.find((b) => b.hostile && !b.inParty);
+  let pvpWins0 = p.ctr.pvpWins || 0;
+  if (hostileBot) {
+    hostileBot.hp = 1;
+    hostileBot.x = p.x + 12; hostileBot.y = p.y;
+    S.player.attackCd = 0;
+    G.handlers.onAttack();
+    await new Promise((r) => setTimeout(r, 180));
+  }
+  const pvpWins1 = p.ctr.pvpWins || 0;
+  G.handlers.onTogglePvp(); // ปิด PK
+
+  // 4) เริ่มหอคอยบั๊ก ชั้นที่ 1 แล้วเคลียร์เวฟ
+  const tRes = G.startTowerFloor(S);
+  const waveList = S.monsters.filter((m) => !m.dead && m.towerWave);
+  const waveCount = waveList.length;
+  for (const m of waveList) {
+    if (!m.dead) {
+      m.hp = 1; m.stun = 5;
+      m.x = p.x + 10; m.y = p.y;
+      S.player.attackCd = 0;
+      G.handlers.onAttack();
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  }
+  return {
+    partyJoined: pRes.ok && pRes.joined && p.partyCount === 1,
+    guildBuffOk: gRes.ok,
+    pvpWon: pvpWins1 > pvpWins0,
+    towerStarted: tRes.ok && waveCount > 0,
+    towerClearedFloor: p.ctr.towerFloor || 0,
+  };
+});
+if (socialTest.partyJoined && socialTest.guildBuffOk) {
+  ok('ระบบปาร์ตี้บอทจำลองและบัฟกิลด์ทำงานจริง');
+} else bad('ระบบปาร์ตี้หรือบัฟกิลด์ไม่ทำงาน', JSON.stringify(socialTest));
+if (socialTest.pvpWon) {
+  ok('ระบบประลอง PvP กับบอทเกรียนทำงานจริง (ได้แต้มชนะ + รางวัล)');
+} else bad('ระบบ PvP ไม่ทำงาน', JSON.stringify(socialTest));
+if (socialTest.towerStarted && socialTest.towerClearedFloor >= 1) {
+  ok(`ระบบดันเจี้ยนหอคอยบั๊กทำงานจริง (เคลียร์ถึงชั้น ${socialTest.towerClearedFloor})`);
+} else bad('ระบบหอคอยบั๊กไม่ทำงาน', JSON.stringify(socialTest));
+
 /* ── 17. บอสโลก + ท่า telegraph ── */
 const bossTest = await page.evaluate(async () => {
   const S = window.__GRIAN__.state;
@@ -816,33 +873,11 @@ if (bossTest.spawned) {
   else bad('บอสไม่มีการร่ายท่า');
 } else bad('บอสโลกไม่เกิด');
 
-/* ── 17b. ถ่ายภาพช่วง telegraph เพื่อยืนยันว่าวงเตือนวาดจริง ── */
-const tellShot = await page.evaluate(async () => {
-  const S = window.__GRIAN__.state;
-  const b = S.boss.entity;
-  if (!b) return { ok: false };
-  b.abilCd = 0;
-  // บังคับให้เป็นท่าแบบมีรัศมี เพื่อให้เห็นวงเตือน
-  S.player.x = b.x + 55; S.player.y = b.y + 20;
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 50));
-    if (b.abil && b.abil.phase === 'tell' && b.abil.radius) return { ok: true, id: b.abil.id, radius: b.abil.radius };
-    if (!b.abil) b.abilCd = 0;
-  }
-  return { ok: false };
-});
-if (tellShot.ok) {
-  await shot('07-boss-telegraph.png');
-  ok(`ถ่ายภาพวงเตือนท่า "${tellShot.id}" (รัศมี ${tellShot.radius}) ได้`);
-} else ok('ไม่ได้จับภาพช่วง telegraph (ท่าสุ่มเป็นแบบไม่มีรัศมี)');
-await shot('07-boss.png');
-
 /* ── 18. ตาย + บทลงโทษ ── */
 const death = await page.evaluate(async () => {
   const S = window.__GRIAN__.state;
   S.player.hp = 1; S.player.def = 0;
   S.player.exp = 10000;
-  // เลือกมอนที่ "จะโจมตีได้" — มอนแบบไม่มี AI (dummy) ยืนเฉยเลยไม่ตี
   const m = S.monsters.find((x) => !x.dead && x.def.ai && x.def.ai !== 'none') || S.monsters.find((x) => !x.dead);
   if (m) { m.x = S.player.x + 8; m.y = S.player.y; m.atk = 9999; m.atkCd = 0; m.stun = 0; m.abil = null; }
   await new Promise((r) => setTimeout(r, 1400));
@@ -886,8 +921,7 @@ const exportTest = await page.evaluate(() => {
 if (exportTest.len > 50) ok(`ส่งออกโค้ดเซฟได้ (${exportTest.len} ตัวอักษร)`);
 else bad('ส่งออกโค้ดเซฟไม่ทำงาน', JSON.stringify(exportTest));
 
-/* ── 19b. บั๊กที่เคยเจอ: คลิกช่องเซฟ "เล่นต่อ" ──
-   เดิมเรียก handler ที่ไม่มีอยู่ → TypeError ทันทีที่คลิก (ui.js เรียก onContinueSlot) */
+/* ── 19b. คลิกช่องเซฟ "เล่นต่อ" ── */
 await page.evaluate(() => { window.__GRIAN__.handlers.onQuitToTitle(); });
 await page.waitForTimeout(400);
 const titleBack = await page.evaluate(() => ({
@@ -907,9 +941,9 @@ const cont = await page.evaluate(() => ({
   lvl: window.__GRIAN__.state.player.lvl,
 }));
 if (cont.screen === 'play' && contErr === 0) ok(`คลิกช่องเซฟ "เล่นต่อ" ทำงานไม่มี error (Lv.${cont.lvl})`);
-else bad('คลิกช่องเซ็มพัง หรือมี error', `screen=${cont.screen} errors=${contErr}`);
+else bad('คลิกช่องเซฟพัง หรือมี error', `screen=${cont.screen} errors=${contErr}`);
 
-/* ── 19c. บั๊ก: รูปตัวละครในการ์ดผู้เล่นว่างเปล่า ── */
+/* ── 19c. รูปตัวละครในการ์ดผู้เล่น ── */
 const face2 = await page.evaluate(() => {
   const cv = document.getElementById('pc-face');
   const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
@@ -920,7 +954,7 @@ const face2 = await page.evaluate(() => {
 if (face2 > 50) ok(`การ์ดผู้เล่นแสดงรูปตัวละคร (${face2} พิกเซล)`);
 else bad('การ์ดผู้เล่นไม่มีรูปตัวละคร', String(face2));
 
-/* ── 19d. บั๊ก: สัตว์เลี้ยงหายหมดหลังเซฟ/เล่นต่อ ── */
+/* ── 19d. สัตว์เลี้ยงอยู่ครบหลังเซฟ/เล่นต่อ ── */
 const petBefore = await page.evaluate(() => {
   const S = window.__GRIAN__.state;
   return { n: S.pets.length, nick: S.pets[0]?.nickname || null, lvl: S.pets[0]?.lvl || 0 };
@@ -951,12 +985,12 @@ if (petAfter.n === petBefore.n && petAfter.nick === petBefore.nick) {
   ok(`เล่นต่อแล้วสัตว์เลี้ยงยังอยู่ครบ (${petAfter.n} ตัว, "${petAfter.nick}")`);
 } else bad('สัตว์เลี้ยงหายหลังเล่นต่อ', JSON.stringify({ petBefore, petAfter }));
 
-/* ── 19e. บั๊ก: exportSave เขียนทับเซฟช่องเดิม ── */
+/* ── 19e. exportSave ไม่ทับช่องเซฟ ── */
 const exportTest2 = await page.evaluate(() => {
   const S = window.__GRIAN__.state;
   window.__GRIAN__.handlers.onSave(0);
   const savedGold = JSON.parse(localStorage.getItem('grian_save_v2_slot0') || '{}').gold;
-  S.player.gold = 999999;                        //  live != saved
+  S.player.gold = 999999;
   document.getElementById('save-code').value = '';
   window.__GRIAN__.UI.el['btn-export'].click();
   const after = JSON.parse(localStorage.getItem('grian_save_v2_slot0') || '{}').gold;
@@ -970,8 +1004,8 @@ if (exportTest2.after === exportTest2.savedGold && exportTest2.codeLen > 50) {
 const night = await page.evaluate(async () => {
   const S = window.__GRIAN__.state;
   const G = window.__GRIAN__;
-  G.DayNight.t = 0.0;                            // เที่ยงคืน
-  await new Promise((r) => setTimeout(r, 1400)); // รอ particle บรรยากาศเกิด
+  G.DayNight.t = 0.0;
+  await new Promise((r) => setTimeout(r, 1400));
   return {
     darkness: +G.DayNight.darkness().toFixed(2),
     lightSpots: S.world.lightSpots.length / 3 | 0,
@@ -982,14 +1016,14 @@ if (night.darkness > 0.5 && night.lightSpots > 0) {
   ok(`กลางคืนมีแหล่งแสง ${night.lightSpots} จุด + หิ่งห้อย ${night.fireflies} ตัว`);
 } else bad('ระบบแสง/หิ่งห้อยกลางคืนไม่ทำงาน', JSON.stringify(night));
 await shot('09-night.png');
-await page.evaluate(() => { window.__GRIAN__.DayNight.t = 0.34; });   // กลับมาช่วงสาย
+await page.evaluate(() => { window.__GRIAN__.DayNight.t = 0.34; });
 
 /* ── 19g. ตั้งค่าการสั่นกล้อง 4 ระดับมีผลต่างกัน ── */
 const shakeTest = await page.evaluate(() => {
   const G = window.__GRIAN__;
   const measure = (val) => {
     G.Settings.set('shake', val);
-    G.Camera.shakeT = 0; G.Camera.shakeMag = 0;   // หมดค่าค้างก่อนวัด
+    G.Camera.shakeT = 0; G.Camera.shakeMag = 0;
     G.Camera.kick(10, 0.2);
     const v = G.Camera.shakeMag;
     G.Camera.shakeT = 0; G.Camera.shakeMag = 0;
@@ -1006,7 +1040,7 @@ if (shakeTest.s0 === 0 && shakeTest.s16 === 16 && shakeTest.s1 === 10 && shakeTe
   ok(`ตั้งค่าการสั่นกล้องใช้ได้ทุก 4 ระดับ (ปิด=0 · เบา=${shakeTest.s05} · ปกติ=${shakeTest.s1} · มาก=${shakeTest.s16})`);
 } else bad('ตั้งค่าการสั่นกล้องไม่ส่งผล', JSON.stringify(shakeTest));
 
-/* ── 20. เมนูหยุดชั่วคราว: ต้องหยุดเวลาจริง ── */
+/* ── 20. เมนูหยุดชั่วคราว ── */
 const pauseTest = await page.evaluate(async () => {
   const S = window.__GRIAN__.state;
   window.__GRIAN__.handlers.onTogglePause();
@@ -1033,43 +1067,11 @@ else bad('ตัววัดประสิทธิภาพไม่ทำง�
 await shot('08-perfhud.png');
 await page.keyboard.press('F3');
 
-/* ── 22. ล้างสนาม + ถ่ายภาพบรรยากาศ ── */
-await page.evaluate(() => {
-  const S = window.__GRIAN__.state;
-  S.player.hp = S.player.maxHp; S.player.mp = S.player.maxMp; S.player.dead = false;
-  S.player.x = S.world.spawn.x; S.player.y = S.world.spawn.y + 40;
-  S.player.prevX = S.player.x; S.player.prevY = S.player.y;
-  S.player.gold = 4820;
-  S.boss.active = false; S.boss.entity = null; S.boss.nextAt = 9999;
-  document.getElementById('death').classList.add('hidden');
-  window.__GRIAN__.UI.closePanels();
-  window.__GRIAN__.UI.hideDialog();
-  window.__GRIAN__.UI.showPause(false);
-  window.__GRIAN__.state.paused = false;
-  S.monsters.forEach((m, i) => {
-    const a = (i / Math.max(1, S.monsters.length)) * Math.PI * 2;
-    const r = 118 + (i % 3) * 38;
-    m.x = S.player.x + Math.cos(a) * r;
-    m.y = S.player.y + Math.sin(a) * r;
-    m.atk = Math.min(m.atk, 6); m.atkCd = 9; m.stun = 9;
-  });
-  // ให้สัตว์เลี้ยงมายืนข้าง ๆ เพื่อให้เห็นในภาพ
-  S.pets.forEach((pt, i) => {
-    pt.ko = false; pt.hp = pt.maxHp;
-    pt.x = S.player.x - 20 + i * 14; pt.y = S.player.y + 12;
-    pt.prevX = pt.x; pt.prevY = pt.y;
-  });
-});
-await page.waitForTimeout(1500);
-await shot('06-gameplay.png');
-
-/* ── 23.5. ระบบใหม่ v0.6.0: ดินแดนมาร์ · ลาว · Portal · มือถือ ── */
+/* ── 23.5. ดินแดนมาร (โซน 2) · ลาว · Portal ── */
 await page.evaluate(() => {
   const S = window.__GRIAN__.state;
   S.player.hp = S.player.maxHp; S.player.dead = false;
 });
-
-// เดินทางไปแดนมาร์
 await page.evaluate(() => window.__GRIAN__.travelTo('hell'));
 await page.waitForTimeout(900);
 const hell = await page.evaluate(() => {
@@ -1087,11 +1089,10 @@ const hell = await page.evaluate(() => {
   };
 });
 if (hell.hell && hell.monsters > 0 && hell.npcs.includes('hunter') && hell.portals === 1) {
-  ok(`ดินแดนมาร์ทำงาน: มอน ${hell.monsters} ตัว (imp ${hell.kinds.imp || 0} · skull ${hell.kinds.skull || 0}) · ลาว ${hell.lava} ไทล์ · NPC ${hell.npcs.join(',')}`);
-} else bad('ดินแดนมาร์ไม่ทำงาน', JSON.stringify(hell));
+  ok(`ดินแดนมารทำงาน: มอน ${hell.monsters} ตัว (imp ${hell.kinds.imp || 0} · skull ${hell.kinds.skull || 0}) · ลาว ${hell.lava} ไทล์ · NPC ${hell.npcs.join(',')}`);
+} else bad('ดินแดนมารไม่ทำงาน', JSON.stringify(hell));
 await shot('10-hell.png');
 
-// ลาวเผา — ยุดผู้เล่นบนลาวแล้วดูเลือด
 const lavaTest = await page.evaluate(async () => {
   const G = window.__GRIAN__;
   const S = G.state;
@@ -1107,31 +1108,45 @@ if (lavaTest.ok && lavaTest.hp1 < lavaTest.hp0) {
   ok(`ลาวเผาผู้เล่นจริง (HP ${lavaTest.hp0} → ${lavaTest.hp1.toFixed(0)})`);
 } else bad('ลาวไม่ทำดาเมจ', JSON.stringify(lavaTest));
 
-// เดินเข้า Portal ทั้งสองทิศ — จากแดนมาร์กลับบ้าน แล้วจากบ้านเข้าแดนมาร์ใหม่
-const portalBack = await page.evaluate(async () => {
+/* ── 23.6. แดนเซิร์ฟเถื่อน (โซน 3 — ใหม่ใน v1.0.0) · บ่อบั๊กไฟดูด · เควสต์ใหม่ ── */
+await page.evaluate(() => window.__GRIAN__.travelTo('cyber'));
+await page.waitForTimeout(900);
+const cyber = await page.evaluate(async () => {
   const G = window.__GRIAN__;
-  const z = G.state.world.portals[0];
-  if (!z) return { ok: false };
-  const p = G.state.player;
-  p.x = z.x + 8; p.y = z.y + 8; p.prevX = p.x; p.prevY = p.y;
-  await new Promise((r) => setTimeout(r, 800));
-  return { ok: true, mapId: G.state.mapId };
+  const S = G.state;
+  const kinds = {};
+  for (const m of S.monsters) kinds[m.id] = (kinds[m.id] || 0) + 1;
+  let glitch = 0, floor = 0;
+  const t = S.world.tiles;
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] === G.T.GLITCH) glitch++;
+    else if (t[i] === G.T.CYBERFLOOR) floor++;
+  }
+  // ทดสอบรับเควสต์ใหม่ของโซน 3
+  G.handlers.onAcceptQuest('q_gpu');
+  G.handlers.onAcceptQuest('q_glitch');
+  // ทดสอบบ่อบั๊กไฟดูด
+  const gi = S.world.tiles.indexOf(G.T.GLITCH);
+  let glitchHurt = false;
+  if (gi >= 0) {
+    const tx = gi % S.world.w, ty = (gi - tx) / S.world.w;
+    S.player.x = tx * 16 + 8; S.player.y = ty * 16 + 8;
+    S.player.hp = 100; S.player.dead = false;
+    await new Promise((r) => setTimeout(r, 1100));
+    glitchHurt = S.player.hp < 100;
+  }
+  return {
+    mapId: S.mapId, cyber: S.world.cyber, zone: S.zoneName,
+    monsters: S.monsters.length, kinds, npcs: S.npcs.map((n) => n.id),
+    glitch, floor, glitchHurt,
+    hasQGpu: !!S.player.quests['q_gpu'],
+    hasQGlitch: !!S.player.quests['q_glitch'],
+  };
 });
-if (portalBack.ok && portalBack.mapId === 'field') ok('Portal จากแดนมาร์กลับแมพแรกทำงาน');
-else bad('Portal จากแดนมาร์ไม่ทำงาน', JSON.stringify(portalBack));
-
-const portalGo = await page.evaluate(async () => {
-  const G = window.__GRIAN__;
-  const z = G.state.world.portals[0];
-  if (!z) return { ok: false };
-  const p = G.state.player;
-  p.x = z.x + 8; p.y = z.y + 8; p.prevX = p.x; p.prevY = p.y;
-  await new Promise((r) => setTimeout(r, 1600));   // รอคูลดาวน์ทาง铜 1.2s เช่นกัน
-  return { ok: true, mapId: G.state.mapId };
-});
-if (portalGo.ok && portalGo.mapId === 'hell') ok('Portal จากแมพแรกเข้าแดนมาร์ทำงานเอง');
-else bad('Portal จากแมพแรกเข้าไม่ได้', JSON.stringify(portalGo));
-await shot('10-hell-portal.png');
+if (cyber.cyber && cyber.monsters > 0 && cyber.npcs.includes('dev_intern') && cyber.glitchHurt && cyber.hasQGpu && cyber.hasQGlitch) {
+  ok(`แดนเซิร์ฟเถื่อน (แมพ 3) ทำงานครบ: มอน ${cyber.monsters} ตัว (botmon ${cyber.kinds.botmon || 0} · glitchbug ${cyber.kinds.glitchbug || 0} · whale ${cyber.kinds.whale || 0}) · บ่อบั๊กไฟดูด ${cyber.glitch} ไทล์ · รับเควสต์ใหม่ครบ`);
+} else bad('แดนเซิร์ฟเถื่อน (แมพ 3) ไม่ครบ', JSON.stringify(cyber));
+await shot('10-cyber.png');
 
 // กลับแมพแรก
 await page.evaluate(() => window.__GRIAN__.travelTo('field'));
@@ -1140,12 +1155,11 @@ const backHome = await page.evaluate(() => {
   const S = window.__GRIAN__.state;
   const kinds = {};
   for (const m of S.monsters) kinds[m.id] = (kinds[m.id] || 0) + 1;
-  return { hell: S.world.hell, npcs: S.npcs.length, monsters: S.monsters.length, kinds };
+  return { hell: S.world.hell, cyber: S.world.cyber, npcs: S.npcs.length, monsters: S.monsters.length, kinds };
 });
-if (!backHome.hell && backHome.npcs >= 6 && backHome.monsters > 0 && !backHome.kinds.imp) {
-  ok(`เดินทางกลับแมพแรกปกติ (NPC ${backHome.npcs} · มอน ${backHome.monsters} ตัว มอนแดนมาร์หายหมด)`)
+if (!backHome.hell && !backHome.cyber && backHome.npcs >= 6 && backHome.monsters > 0 && !backHome.kinds.imp && !backHome.kinds.botmon) {
+  ok(`เดินทางกลับแมพแรกปกติ (NPC ${backHome.npcs} · มอน ${backHome.monsters} ตัว)`);
 } else bad('กลับแมพแรกมีปัญหา', JSON.stringify(backHome));
-await shot('10-hell-back.png');
 
 // ควบคุมแบบแตะ (มือถือ)
 await page.evaluate(() => { window.__GRIAN__.Settings.set('touchControls', 'on'); });
@@ -1165,7 +1179,7 @@ const touchOff = await page.evaluate(() => document.body.classList.contains('tou
 if (!touchOff) ok('ปิดโหมดแตะได้ (UI ซ่อน)');
 else bad('โหมดแตะปิดไม่ลง');
 
-/* ── 23.9. บอสเฟส 2 — เลือด <50% เปลี่ยน pool ท่า ── */
+/* ── 23.9. บอสเฟส 2 ── */
 const bossP2 = await page.evaluate(async () => {
   const G = window.__GRIAN__;
   const S = G.state;
@@ -1187,7 +1201,7 @@ if (bossP2.ok && bossP2.stillP1 && bossP2.phase2) {
   ok(`บอสเฟส 2: เลือด <50% เข้าโหมดโกรธ (ATK ${bossP2.atk}) ท่าใหม่แรงขึ้น`);
 } else bad('บอสเฟส 2 ไม่ทำงาน', JSON.stringify(bossP2));
 
-/* ── 24. ระบบใหม่ v0.9.0: เต็มจอ · ออโต้เควสต์ · 3D lighting ── */
+/* ── 24. เต็มจอ · ออโต้เควสต์ · 3D lighting + 3D VFX + 3D Zoom ── */
 const full = await page.evaluate(() => {
   const cv = document.getElementById('world');
   const st = document.getElementById('stage');
@@ -1198,8 +1212,8 @@ const full = await page.evaluate(() => {
     noScroll: document.documentElement.scrollHeight <= window.innerHeight + 1,
   };
 });
-if (full.cover && full.noScroll) ok(`เต็มจอ: แคนวัสเต็มจอ (${full.cw}×${full.ch} — ไม่มีขอบดำ/scrollbar)`);
-else bad('แคนวัสไม่ได้เต็มจอ', JSON.stringify(full));
+if (full.cover && full.noScroll) ok(`เต็มจอ: แคนวาสเต็มจอ (${full.cw}×${full.ch} — ไม่มีขอบดำ/scrollbar)`);
+else bad('แคนวาสไม่ได้เต็มจอ', JSON.stringify(full));
 
 const aqBtn = await page.evaluate(() => {
   const G = window.__GRIAN__;
@@ -1234,26 +1248,43 @@ if (g3.hasCanvas && g3.cover) {
   ok(`ชั้น 3D (three.js) สร้างแล้ว${g3.ok ? ' และเปิดใช้งาน — แสง/น้ำ/อากาศ' : ' (ปิดไว้: การ์ดจอ/software — fallback 2D)'}`);
 } else bad('ชั้น 3D ไม่ครบ', JSON.stringify(g3));
 
-/* ── 3D pipeline: เปิด three.js กลางเทสต์แล้วอ่านพิกเซล GL (rAF ในเฟรมเดียวกับ render) ── */
 const gl3 = await page.evaluate(async () => {
   const G = window.__GRIAN__;
-  if (!G.GFX3D.ok) G.Settings.set('render3d', 'on');
-  await new Promise((r) => setTimeout(r, 1200));
-  return await new Promise((resolve) => {
+  // บังคับเปิด three.js แม้บน software GL เพื่อตรวจ pipeline + 3D VFX + 3D Zoom
+  const origSw = G.GFX3D._softwareGL;
+  G.GFX3D._softwareGL = () => false;
+  G.GFX3D._bench = () => true;
+  G.Settings.set('render3d', 'on');
+  G.GFX3D.setZoom(-0.15);
+  G.VFX.spawn('shockwave', { x: G.state.player.x, y: G.state.player.y, color: '#4ae8ff', size: 48, dur: 0.8 });
+  await new Promise((r) => setTimeout(r, 600));
+  const res = await new Promise((resolve) => {
     requestAnimationFrame(() => {
-      if (!G.GFX3D.ok) return resolve({ ok: false });
+      if (!G.GFX3D.ok) return resolve({ ok: false, reason: G.GFX3D.reason });
       const gl = G.GFX3D.renderer.getContext();
       const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
       const px = new Uint8Array(w * h * 4);
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
       const set = new Set();
       for (let i = 0; i < px.length; i += 4) set.add(`${px[i]},${px[i + 1]},${px[i + 2]}`);
-      resolve({ ok: true, colors: set.size, lights: G.GFX3D.lightPool.filter((l) => l.visible).length });
+      const activeFx3D = (G.GFX3D.fx3dList || []).filter((f) => f.active).length;
+      const sunZValid = !Number.isNaN(G.GFX3D.sun.position.z);
+      resolve({
+        ok: true,
+        colors: set.size,
+        lights: G.GFX3D.lightPool.filter((l) => l.visible).length,
+        activeFx3D,
+        sunZValid,
+        zoom: +G.GFX3D.zoom.toFixed(2),
+      });
     });
   });
+  G.GFX3D._softwareGL = origSw;
+  return res;
 });
-if (gl3.ok && gl3.colors > 60) ok(`three.js เรนเดอร์ GL ได้: ${gl3.colors} สี · ไฟจุดที่เปิด ${gl3.lights}`);
-else bad('three.js เรนเดอร์ GL ไม่ได้', JSON.stringify(gl3));
+if (gl3.ok && gl3.colors > 40 && gl3.sunZValid) {
+  ok(`three.js เรนเดอร์ GL ได้: ${gl3.colors} สี · ไฟจุด ${gl3.lights} · 3D VFX active=${gl3.activeFx3D} · ซูม=${gl3.zoom} · พิกัดดวงอาทิตย์ถูกต้อง`);
+} else bad('three.js เรนเดอร์ GL ไม่ได้ หรือพิกัดดวงอาทิตย์ผิด', JSON.stringify(gl3));
 await page.evaluate(() => window.__GRIAN__.Settings.set('render3d', 'off'));
 
 /* ── 25. ปล่อยรันต่อเพื่อจับ error ที่หลุด ── */

@@ -91,6 +91,17 @@ await page.evaluate(() => {
 await page.waitForTimeout(2500);
 await page.screenshot({ path: path.join(OUT, 'v3d-hell.png') });
 
+// โซน 3 — แดนเซิร์ฟเถื่อน กลางคืน (霓虹/DATASTREAM/GLITCH)
+await page.evaluate(() => {
+  const G = window.__GRIAN__;
+  const p = G.state.player;
+  p.maxHp = 600; p.hp = 600;
+  G.travelTo('cyber');
+  G.DayNight.t = 0.05;
+});
+await page.waitForTimeout(2500);
+await page.screenshot({ path: path.join(OUT, 'v3d-cyber.png') });
+
 console.log('errors:', errors.length);
 errors.slice(0, 5).forEach((e) => console.log(' !', e));
 await browser.close();

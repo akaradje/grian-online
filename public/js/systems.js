@@ -34,11 +34,9 @@ export function tickChat(state, dt) {
   const line = rand(CHAT[ch]);
   pushChat(state, ch, name, line);
 
-  // GM แทรกเป็นครั้งคราว
   if (Math.random() < 0.06) {
     pushChat(state, 'world', NPCS.gm.name, rand(CHAT.gm), 'gm');
   }
-  // ระบบประกาศเรื่องปิดปรับปรุง (แล้วไม่ปิด)
   if (Math.random() < 0.05) {
     pushChat(state, 'system', '', 'เซิร์ฟเวอร์จะปิดปรับปรุงใน 1 นาที', 'system');
   }
@@ -86,7 +84,6 @@ export function updateQuests(state, dt) {
   for (const q of QUESTS) {
     const prog = p.quests[q.id];
     if (!prog || prog.state !== 'active') continue;
-    // กลไก "แพตช์ฉุกเฉิน" — ล้อเลียนการปรับอัตราดรอปกลางทาง
     if (q.mercy && !prog.mercyDone && state.time - prog.acceptedAt > q.mercy.at) {
       prog.mercyDone = true;
       for (const md of Object.values(MONSTERS)) {
@@ -155,7 +152,6 @@ export function doGacha(state, times) {
     if (rar === '5') p.ctr.gacha5 = (p.ctr.gacha5 || 0) + 1;
     if (rar === '1') p.ctr.gacha1 = (p.ctr.gacha1 || 0) + 1;
   }
-  // เพื่อนร่วมทีมที่ดีที่สุดจะตามหลังผู้เล่น
   const best = results.slice().sort((a, b) => Number(b.rarity) - Number(a.rarity))[0];
   if (best && Number(best.rarity) >= 4) {
     p.companion = { n: best.n, e: best.e, rarity: best.rarity };
@@ -174,7 +170,7 @@ export function tickBoss(state, dt) {
     b.entity = e;
     b.active = true;
     state.monsters.push(e);
-    sysMsg(state, 'บอสโลกปรากฏตัวแล้วที่ แมพ 1 (ลานตะวันออก)');
+    sysMsg(state, 'บอสโลกปรากฏตัวแล้วที่ลานบอส');
     pushChat(state, 'world', rand(BOT_NAMES), 'บอสเกิดแล้ววว ไปกัน', 'world');
     pushChat(state, 'world', rand(BOT_NAMES), 'ไปตายกันอีกแล้ว');
     state.onBossSpawn?.(e);
@@ -199,7 +195,6 @@ export function tickSpawn(state, dt) {
   const p = state.player;
   const region = state.world.regionAt(p.x, p.y);
 
-  // มอนจะเกิดตามโซน — สุสานมีผี ปากถ้ำมีค้างคาว ทุ่งหญ้าสูงมีมอนชุม
   const byRegion = {
     graveyard: [['ghost', 1.6], ['dummy', 0.4], ['taxman', 0.5], ['rat', 0.3]],
     cave: [['bat', 1.6], ['dummy', 0.5], ['pro', 0.5]],
@@ -207,6 +202,8 @@ export function tickSpawn(state, dt) {
     shore: [['slime', 1.5], ['rat', 0.6], ['bat', 0.4]],
     hellfield: [['imp', 1.6], ['skull', 1.0], ['ghost', 0.4]],
     hellcore: [['skull', 1.6], ['imp', 1.4], ['pro', 0.4]],
+    cyberfield: [['botmon', 1.7], ['glitchbug', 1.2], ['whale', 0.5]],
+    cybercore: [['glitchbug', 1.5], ['whale', 1.1], ['botmon', 1.2]],
     field: [],
   };
   const base = [
@@ -218,9 +215,10 @@ export function tickSpawn(state, dt) {
     ['ghost', lvl >= 8 ? 0.35 : 0],
     ['pro', lvl >= 9 ? 0.3 : 0],
   ];
-  // ในดินแดนมาร์ไม่มีมอนพันธุ์หมู่บ้าน — ให้ความรู้สึกว่าเป็นโลกอีกใบ
-  const baseTable = state.world.hell ? [] : base;
-  const extra = byRegion[region] || [];
+  const baseTable = (state.world.hell || state.world.cyber) ? [] : base;
+  const extra = byRegion[region] || (
+    state.world.cyber ? byRegion.cyberfield : (state.world.hell ? byRegion.hellfield : [])
+  );
   const merged = new Map();
   for (const [id, w] of baseTable) merged.set(id, (merged.get(id) || 0) + w);
   for (const [id, w] of extra) if (MONSTERS[id]) merged.set(id, (merged.get(id) || 0) + w);
@@ -232,9 +230,8 @@ export function tickSpawn(state, dt) {
   let pick = 'rat';
   for (const [id, w] of table) { r -= w; if (r <= 0) { pick = id; break; } }
 
-  // ในเขตที่กำหนด ให้เกิดในเขตนั้นเพื่อให้สอดคล้องกับบรรยากาศ
   const spot = (region === 'graveyard' || region === 'cave' || region === 'tallgrass'
-    || region === 'hellfield' || region === 'hellcore')
+    || region === 'hellfield' || region === 'hellcore' || region === 'cyberfield' || region === 'cybercore')
     ? state.world.randomSpot(Math.random, { region, awayFrom: p, minDist: 120 })
     : undefined;
   spawnMonster(state, pick, spot);
@@ -242,17 +239,12 @@ export function tickSpawn(state, dt) {
 
 export function initialMonsters(state) {
   const w = state.world;
-  // มอนพื้นฐานกระจายทั้งแผนที่ (ข้ำงในแดนมาร์ไม่มีมอนหมู่บ้าน)
-  if (!w.hell) {
-    for (let i = 0; i < 16; i++) {
-      spawnMonster(state, rand(['rat', 'rat', 'slime', 'dummy', 'taxman']));
-    }
-    // ประชากรประจำโซน — ให้แต่ละเขตมีเอกลักษณ์ตั้งแต่แรกเข้า
+  if (w.cyber) {
     const zones = [
-      ['ghost', 'graveyard', 5],
-      ['bat', 'cave', 4],
-      ['rat', 'tallgrass', 4],
-      ['slime', 'shore', 3],
+      ['botmon', 'cyberfield', 8],
+      ['glitchbug', 'cyberfield', 6],
+      ['whale', 'cybercore', 3],
+      ['glitchbug', 'cybercore', 4],
     ];
     for (const [id, region, n] of zones) {
       for (let i = 0; i < n; i++) {
@@ -260,8 +252,7 @@ export function initialMonsters(state) {
         spawnMonster(state, id, spot);
       }
     }
-  } else {
-    // ดินแดนมาร์: ปีศาจไฟ + กะโหลกว่าจัดการทั้งแมพตั้งแต่แรกเข้า
+  } else if (w.hell) {
     const zones = [
       ['imp', 'hellfield', 8],
       ['skull', 'hellfield', 6],
@@ -274,12 +265,28 @@ export function initialMonsters(state) {
         spawnMonster(state, id, spot);
       }
     }
+  } else {
+    for (let i = 0; i < 16; i++) {
+      spawnMonster(state, rand(['rat', 'rat', 'slime', 'dummy', 'taxman']));
+    }
+    const zones = [
+      ['ghost', 'graveyard', 5],
+      ['bat', 'cave', 4],
+      ['rat', 'tallgrass', 4],
+      ['slime', 'shore', 3],
+    ];
+    for (const [id, region, n] of zones) {
+      for (let i = 0; i < n; i++) {
+        const spot = w.randomSpot(Math.random, { region, tries: 140 });
+        spawnMonster(state, id, spot);
+      }
+    }
   }
-  // หีบสมบัติเฝ้าด้วยมอนที่แข็งกว่าเล็กน้อย
   for (const c of w.chests) {
     if (Math.random() < 0.6) {
       const spot = w.randomSpot(Math.random, { awayFrom: { x: c.x, y: c.y }, minDist: 40, tries: 60 });
-      spawnMonster(state, rand(['taxman', 'dummy', 'rat']), spot, true);
+      const guardPool = w.cyber ? ['botmon', 'glitchbug'] : (w.hell ? ['imp', 'skull'] : ['taxman', 'dummy', 'rat']);
+      spawnMonster(state, rand(guardPool), spot, true);
     }
   }
 }
@@ -288,31 +295,30 @@ export function initialMonsters(state) {
 export function deathQuote(state) {
   return rand(DEATH_QUOTES).replace('{n}', String(state.player.deaths));
 }
-export function levelQuote(state) { return rand(LEVEL_QUOTES); }
+export function levelQuote() { return rand(LEVEL_QUOTES); }
 export function bossTaunt() { return rand(BOSS_TAUNTS); }
 export function fakeOnline(state) {
   return TITLE_ONLINE_BASE + Math.floor(Math.sin(state.time * 0.07) * 40) + Math.floor(Math.random() * 6);
 }
-export function fakePing(state) {
+export function fakePing() {
   const r = Math.random();
   if (r < 0.82) return CONFIG.PING_FAKE[Math.floor(Math.random() * 3)];
   return CONFIG.PING_FAKE[3 + Math.floor(Math.random() * (CONFIG.PING_FAKE.length - 3))];
 }
 
-/* ─────────────── เซฟ / โหลด ───────────────
-   v2: 3 ช่อง + สถิติ + ความสำเร็จ + ระดับอัพเกรด + ตั้งค่าแยกต่างหาก
-   เซฟ v1 (ช่องเดียว) จะถูกย้ายเข้าช่อง 1 อัตโนมัติ                        */
+/* ─────────────── เซฟ / โหลด ─────────────── */
 export const SAVE_SLOTS = 3;
 export const SAVE_VERSION = 2;
 const slotKey = (s) => `grian_save_v2_slot${s}`;
 const LEGACY_KEY = 'grian_online_save_v1';
 
-/** รวมข้อมูลเซฟเป็น object (ใช้ทั้ง saveGame และ exportSave) */
+/** รวมข้อมูลเซฟเป็น object */
 function buildSaveData(state) {
   const p = state.player;
   return {
     v: SAVE_VERSION,
     savedAt: Date.now(),
+    mapId: state.mapId || 'field',
     name: p.name, clsId: p.clsId, lvl: p.lvl, exp: Math.floor(p.exp),
     hp: Math.round(p.hp), mp: Math.round(p.mp),
     gold: Math.floor(p.gold), gems: p.gems, tickets: p.tickets,
@@ -324,7 +330,6 @@ function buildSaveData(state) {
     maxGold: Math.floor(p.maxGold || 0),
     unlocked: p.unlocked || {},
     ctr: p.ctr || {},
-    // สัตว์เลี้ยง — เดิมไม่บันทึกเลย เล่นต่อแล้วหายหมด
     pets: (state.pets || []).map((pt) => ({
       uid: pt.uid, speciesId: pt.speciesId, rarityId: pt.rarityId,
       nickname: pt.nickname, lvl: pt.lvl, exp: pt.exp,
@@ -332,7 +337,6 @@ function buildSaveData(state) {
       kills: pt.kills, ko: pt.ko, caughtFrom: pt.caughtFrom || null,
     })),
     activePet: p.activePet || null,
-    // หีบสมบัติที่เปิดแล้ว — เดิมเล่นต่อแล้วหีบคืนมาเปิดใหม่ได้อีก
     openedChests: state.world
       ? state.world.chests.filter((c) => c.opened).map((c) => c.id)
       : [],
@@ -352,15 +356,16 @@ export function saveGame(state, slot = 0) {
   } catch (e) { return false; }
 }
 
-/** กู้คืนสถานะของโลกที่ผูกกับเซฟ (หีบที่เปิดแล้ว) — เรียกหลังสร้าง World */
+/** กู้คืนสถานะของโลกที่ผูกกับเซฟ (หีบที่เปิดแล้ว) */
 export function restoreWorld(state, d) {
   if (!d || !state.world) return;
   const opened = d.openedChests;
   if (!Array.isArray(opened) || !opened.length) return;
+  const floorTile = state.world.cyber ? T.CYBERFLOOR : (state.world.hell ? T.ASH : T.GRASS);
   for (const c of state.world.chests) {
     if (!opened.includes(c.id)) continue;
     c.opened = true;
-    state.world.set(c.tx, c.ty, T.GRASS);   // เปิดแล้วกลายเป็นพื้นหญ้า
+    state.world.set(c.tx, c.ty, floorTile);
     state.world.repaintRegion(c.tx - 1, c.ty - 1, 3, 3);
   }
 }
@@ -378,7 +383,6 @@ export function loadSave(slot = 0) {
   return d;
 }
 
-/** แปลงเซฟ v1 → v2 (ของเดิมไม่มี ctr/unlocked/maxGold) */
 function upgradeV1(d) {
   return {
     ...d,
@@ -395,7 +399,6 @@ function upgradeV1(d) {
   };
 }
 
-/** ย้ายเซฟช่องเดียวของเวอร์ชันแรกเข้าช่อง 1 (ทำครั้งเดียว) */
 export function migrateLegacy() {
   try {
     const raw = localStorage.getItem(LEGACY_KEY);
@@ -441,12 +444,9 @@ export function wipeSave(slot) {
   } catch (e) { return false; }
 }
 
-/** ส่งออกเป็นโค้ดข้อความ (ให้ผู้ใช้คัดลอกเก็บเองได้) */
 export function exportSave(state) {
   try {
-    // เดิม: saveGame(state, 0) แล้วอ่านคืน — เซฟช่อง 1 ของผู้เล่นถูกเขียนทับ!
-    // ตอนนี้สร้างข้อมูลแยกในหน่วยความจำ ไม่แตะ localStorage เลย
-    const tmp = { state: { player: state.player, pets: state.pets, time: state.time, world: state.world } };
+    const tmp = { state: { player: state.player, pets: state.pets, time: state.time, world: state.world, mapId: state.mapId } };
     const raw = JSON.stringify(buildSaveData(tmp.state));
     const code = btoa(unescape(encodeURIComponent(raw)));
     return code;
