@@ -1,7 +1,7 @@
 services:
   - type: web
     name: grian-online
-    env: node
+    runtime: node
     plan: free
     buildCommand: "echo 'Zero-dependency build ready'"
     startCommand: "node serve.mjs"
