@@ -268,7 +268,9 @@ function render(alpha, frameDt) {
     for (const d of state.drops) list.push({ sprId: d.id === 'gem' ? 'drop_gem' : 'drop_bag', x: d.x, y: d.y, frame: Math.floor(state.time * 3) % 2 });
     const myAura = playerAura(p);
     list.push({ sprId: 'hero_' + p.clsId, x: px, y: py, frame: p.frame, flip: p.dir < 0, headUp: 0, auraColor: myAura ? myAura.color : null });
+    const hadBench = GFX3D._benchPending;
     GFX3D.render(state, alpha, frameDt, list);
+    if (hadBench) { lastTs = performance.now(); Perf.reset(); }
     if (!GFX3D.ok && GFX3D.reason === 'slow-gl') {
       UI.toast('เครื่อง/การ์ดจอรัน 3D ไม่ทัน — สลับไป 2D (เปิดบังคับได้ที่ตั้งค่า)', 'bad');
       GFX3D.reason = 'off';
@@ -1699,7 +1701,7 @@ window.addEventListener('beforeunload', () => { if (state.screen === 'play') sav
 
 /* เปิดให้ตรวจสอบจากภายนอก (ใช้ตอนทดสอบอัตโนมัติ) */
 window.__GRIAN__ = {
-  state, view, UI, handlers, input, Audio, Settings, Particles, Camera, DayNight, HitStop, Perf,
+  state, step, view, UI, handlers, input, Audio, Settings, Particles, Camera, DayNight, HitStop, Perf,
   VFX, Auto, AutoQ, GFX3D, Net, hasFullSet,
   hasSave, listSlots, wipeSave,
   get finder() { return finder; },

@@ -199,7 +199,7 @@ export const GFX3D = {
   init(world) {
     const canvas = document.getElementById('world-3d');
     if (!canvas) { this.reason = 'no-canvas'; return false; }
-    if (this._softwareGL()) { this.reason = 'software-gl'; return false; }
+    if (Settings.get('render3d') !== 'on' && this._softwareGL()) { this.reason = 'software-gl'; return false; }
     try {
       this.renderer = new THREE.WebGLRenderer({
         canvas, antialias: true, alpha: false, preserveDrawingBuffer: true,
@@ -355,13 +355,16 @@ export const GFX3D = {
   _bench() {
     try {
       const gl = this.renderer.getContext();
+      // Warmup: คอมไพล์ Shader และอัปโหลด Buffer ลงการ์ดจอให้เสร็จก่อนจับเวลาจริง
       this.renderer.render(this.scene, this.camera);
-      const t0 = performance.now();
-      for (let i = 0; i < 12; i++) this.renderer.render(this.scene, this.camera);
       gl.finish();
-      const avg = (performance.now() - t0) / 12;
+      const N = 6;
+      const t0 = performance.now();
+      for (let i = 0; i < N; i++) this.renderer.render(this.scene, this.camera);
+      gl.finish();
+      const avg = (performance.now() - t0) / N;
       this.benchMs = Math.round(avg * 10) / 10;
-      return avg < 22;
+      return avg < 28;
     } catch (e) { return false; }
   },
 

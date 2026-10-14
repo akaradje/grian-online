@@ -1327,7 +1327,46 @@ const gl3 = await page.evaluate(async () => {
 if (gl3.ok && gl3.colors > 40 && gl3.sunZValid && gl3.terrainAligned && gl3.noFloorBillboards) {
   ok(`three.js เรนเดอร์ GL ได้: ${gl3.colors} สี · ไฟจุด ${gl3.lights} · 3D VFX active=${gl3.activeFx3D} · ซูม=${gl3.zoom} · พิกัดพื้น/Cutout/ดวงอาทิตย์ถูกต้อง`);
 } else bad('three.js เรนเดอร์ GL ไม่ได้ หรือพิกัดผิด', JSON.stringify(gl3));
-await page.evaluate(() => window.__GRIAN__.Settings.set('render3d', 'off'));
+// 24a-2. ทดสอบ Regression จอ 60Hz VSync: เมื่อ autoQuality=true และ Perf.fps=60 ต่อเนื่อง 6 วินาที ต้องไม่ปิด 3D
+const vsyncTest = await page.evaluate(() => {
+  const G = window.__GRIAN__;
+  const S = G.state;
+  G.GFX3D.ok = true;
+  G.Settings.set('autoQuality', true);
+  G.Settings.set('render3d', 'auto');
+  G.Particles.quality = 'high';
+  S._aqLo = 0; S._aqLo2 = 0;
+
+  // จำลองจอ 60Hz VSync (60.0 FPS) เป็นเวลา 6 วินาที (360 เฟรม)
+  G.Perf.fps = 60.0;
+  for (let i = 0; i < 360; i++) G.step(1 / 60);
+  const stay3DAt60 = G.GFX3D.ok === true && G.Particles.quality === 'high';
+
+  // จำลอง 50 FPS (ต่ำกว่า 60 เล็กน้อย) อีก 6 วินาที — 3D และ Particle ต้องยังอยู่ครบ
+  G.Perf.fps = 50.0;
+  for (let i = 0; i < 360; i++) G.step(1 / 60);
+  const stay3DAt50 = G.GFX3D.ok === true && G.Particles.quality === 'high';
+
+  // จำลองโหมดบังคับ 3D (render3d = "on") แม้ FPS ตกเหลือ 15 FPS นาน 6 วินาที — ต้องไม่ปิด 3D
+  G.Settings.set('render3d', 'on');
+  G.Perf.fps = 15.0;
+  for (let i = 0; i < 360; i++) G.step(1 / 60);
+  const forcedOnStays3D = G.GFX3D.ok === true;
+
+  // จำลองโหมด auto เมื่อการ์ดจอไม่ไหวจริง (15 FPS นาน 6 วินาที) — ต้องสลับลง 2D อัตโนมัติ
+  G.Settings.set('render3d', 'auto');
+  G.Perf.fps = 15.0;
+  for (let i = 0; i < 360; i++) G.step(1 / 60);
+  const autoFallbackAt15 = G.GFX3D.ok === false;
+
+  G.Settings.set('autoQuality', false);
+  G.Settings.set('render3d', 'off');
+  G.Particles.quality = 'high';
+  return { stay3DAt60, stay3DAt50, forcedOnStays3D, autoFallbackAt15 };
+});
+if (vsyncTest.stay3DAt60 && vsyncTest.stay3DAt50 && vsyncTest.forcedOnStays3D && vsyncTest.autoFallbackAt15) {
+  ok('Regression 60Hz VSync ผ่าน: autoQuality ที่ 60/50 FPS ไม่ตัด 3D · โหมดบังคับเปิดไม่ถูกตัด · โหมด auto ตัดลง 2D เมื่อ <24 FPS');
+} else bad('Regression 60Hz VSync ล้มเหลว', JSON.stringify(vsyncTest));
 
 /* ── 24b. ทดสอบ v2.0.0: ระบบออนไลน์เรียลไทม์ (Multiplayer API/WS) + ชุดเกราะ 3 ช่อง (Full Set Bonus) + 3D Meshes ── */
 const v2Test = await page.evaluate(async () => {
