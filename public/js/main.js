@@ -15,7 +15,7 @@ import {
   updatePlayer, updateMonsters, updateNpcs, updateBots, updateDrops, updateEffects,
   playerAttack, useSkill, checkLevelUp, applyDeathPenalty, upgradeEquipped, killMonster,
   addFloater, nearestMonster, ATTACK_RANGE, advanceClass,
-  craftProtectCharm, togglePartyBot, applyGuildBuff, startTowerFloor, playerAura, hitBot,
+  craftProtectCharm, togglePartyBot, applyGuildBuff, startTowerFloor, playerAura, hasFullSet, hitBot,
 } from './entities.js';
 import {
   updatePets, attemptCapture, finishCapture,
@@ -35,6 +35,7 @@ import { VFX } from './vfx.js';
 import { Auto } from './auto.js';
 import { AutoQ } from './autoquest.js';
 import { GFX3D } from './gfx3d.js';
+import { Net } from './net.js';
 
 /* ───────────── สถานะเกม ───────────── */
 const state = {
@@ -160,6 +161,7 @@ function step(dt) {
   updateMonsters(state, dt);
   updateNpcs(state, dt);
   updateBots(state, dt);
+  Net.update(state, dt);
   updatePets(state, dt);
   updateCapture(state, dt);
   updateDrops(state, dt);
@@ -257,10 +259,15 @@ function render(alpha, frameDt) {
       if (b.koT > 0) continue;
       list.push({ sprId: 'hero_' + CLASSES[(b._c || 0) % CLASSES.length].id, x: b.x, y: b.y, frame: b.frame, flip: b.dir < 0 });
     }
-    for (const m of state.monsters) if (!m.dead) list.push({ sprId: m.def.sprite, x: m.x, y: m.y, frame: m.frame, headUp: m.boss ? 8 : 0, shadowR: m.boss ? 26 : 0 });
+    for (const peer of Net.sameMapPeers(state)) {
+      const pAura = peer.auraLvl >= 10 ? '#ff4d6b' : (peer.auraLvl >= 9 ? '#ffc94d' : (peer.auraLvl >= 7 ? '#b98bff' : (peer.auraLvl >= 5 ? '#4aa8ff' : null)));
+      list.push({ sprId: 'hero_' + (peer.clsId || 'loot'), x: peer.renderX ?? peer.x, y: peer.renderY ?? peer.y, frame: peer.frame || 0, flip: peer.dir < 0, auraColor: pAura });
+    }
+    for (const m of state.monsters) if (!m.dead) list.push({ sprId: m.def.sprite, x: m.x, y: m.y, frame: m.frame, flip: m.dir < 0, headUp: m.boss ? 8 : 0, shadowR: m.boss ? 26 : 0, auraColor: m.boss ? '#ff4d6b' : (m.elite ? m.elite.aura : null) });
     for (const pt of state.pets) list.push({ sprId: pt.speciesId, x: pt.x, y: pt.y, frame: pt.frame, flip: pt.dir < 0 });
     for (const d of state.drops) list.push({ sprId: d.id === 'gem' ? 'drop_gem' : 'drop_bag', x: d.x, y: d.y, frame: Math.floor(state.time * 3) % 2 });
-    list.push({ sprId: 'hero_' + p.clsId, x: px, y: py, frame: p.frame, flip: p.dir < 0, headUp: 0 });
+    const myAura = playerAura(p);
+    list.push({ sprId: 'hero_' + p.clsId, x: px, y: py, frame: p.frame, flip: p.dir < 0, headUp: 0, auraColor: myAura ? myAura.color : null });
     GFX3D.render(state, alpha, frameDt, list);
     if (!GFX3D.ok && GFX3D.reason === 'slow-gl') {
       UI.toast('เครื่อง/การ์ดจอรัน 3D ไม่ทัน — สลับไป 2D (เปิดบังคับได้ที่ตั้งค่า)', 'bad');
@@ -371,6 +378,7 @@ function render(alpha, frameDt) {
       && y >= cy - viewPad && y <= cy + CONFIG.VIEW_H + viewPad;
     for (const n of state.npcs) if (inView(n.x, n.y)) list.push({ y: n.y, kind: 'npc', e: n });
     for (const b of state.bots) if (b.koT <= 0 && inView(b.x, b.y)) list.push({ y: b.y, kind: 'bot', e: b });
+    for (const peer of Net.sameMapPeers(state)) if (inView(peer.renderX ?? peer.x, peer.renderY ?? peer.y)) list.push({ y: peer.renderY ?? peer.y, kind: 'peer', e: peer });
     for (const m of state.monsters) if (!m.dead && inView(m.x, m.y)) list.push({ y: m.y, kind: 'mon', e: m });
     for (const pt of state.pets) if (inView(pt.x, pt.y)) list.push({ y: pt.y, kind: 'pet', e: pt });
     if (inView(px, py)) list.push({ y: py, kind: 'me', e: p });
@@ -402,6 +410,7 @@ function render(alpha, frameDt) {
       else if (it.kind === 'mon') sprId = e.def.sprite;
       else if (it.kind === 'npc') sprId = e.sprite;
       else if (it.kind === 'pet') sprId = e.speciesId;
+      else if (it.kind === 'peer') sprId = 'hero_' + (e.clsId || 'loot');
       else sprId = 'hero_' + CLASSES[(e._c || 0) % CLASSES.length].id;
       const spr = SPR[sprId] || SPR['dummy'];
       const f = spr.frames[e.frame % spr.frames.length] || spr.frames[0];
@@ -653,6 +662,7 @@ function doAttack() {
   if (p.attackCd > 0) return;
   p.attackCd = 0.42;
   playerAttack(state, 1);
+  Net.sendAction('attack');
 }
 
 function nearestNpc() {
@@ -1105,7 +1115,8 @@ const handlers = {
 
   onSkill(id) {
     const r = useSkill(state, id);
-    if (!r.ok) { UI.toast(r.msg, 'bad'); Audio.play('error'); }
+    if (!r.ok) { UI.toast(r.msg, 'bad'); Audio.play('error'); return; }
+    Net.sendAction('skill', { skillId: id });
   },
 
   onUseItem(id) {
@@ -1163,7 +1174,7 @@ const handlers = {
     const p = state.player;
     const d = ITEMS[id];
     if (!d || d.kind !== 'equip') { UI.toast('ไอเทมนี้สวมใส่ไม่ได้', 'bad'); return; }
-    const slot = d.slot || ((id === 'ring_fake' || id === 'amulet_whale') ? 'acc' : 'weapon');
+    const slot = d.slot || ((id === 'ring_fake' || id === 'amulet_whale') ? 'acc' : (id.startsWith('armor_') ? 'armor' : 'weapon'));
     const prev = p.equip[slot];
     const prevLvl = prev?.lvl || 0;
     if (prev) addItem(p, prev.id, 1);
@@ -1264,6 +1275,7 @@ const handlers = {
 
   onChatSend(text) {
     pushChat(state, 'world', state.player.name, text, 'self');
+    Net.sendChat('world', state.player.name, text);
     Audio.play('chat');
     if (Math.random() < 0.7) state.replyT = 0.8 + Math.random() * 1.6;
     if (/gm|จีเอ็ม/i.test(text)) {
@@ -1491,6 +1503,7 @@ window.addEventListener('blur', () => { input.keys.clear(); if (state.screen ===
 
 /* ───────────── hook จากระบบ ───────────── */
 state.onToast = (t, k) => UI.toast(t, k);
+state.onNetChat = (m) => pushChat(state, m.ch || 'world', '🌐 ' + m.name, m.text, m.ch === 'system' ? 'gm' : 'world');
 state.onLoot = (id, qty) => UI.lootFeed(id, qty);
 state.onLevelUp = (lvl) => {
   UI.levelUp(lvl);
@@ -1652,6 +1665,22 @@ const unlock = () => {
 window.addEventListener('pointerdown', unlock);
 window.addEventListener('keydown', unlock);
 
+// คลิกที่มินิแมปเพื่อเดินไปยังจุดนั้นอัตโนมัติ (A*)
+const mmEl = document.getElementById('minimap');
+mmEl?.addEventListener('click', (e) => {
+  if (state.screen !== 'play' || !state.player || !state.world || !finder) return;
+  const r = mmEl.getBoundingClientRect();
+  const wx = ((e.clientX - r.left) / Math.max(1, r.width)) * state.world.w * CONFIG.TILE;
+  const wy = ((e.clientY - r.top) / Math.max(1, r.height)) * state.world.h * CONFIG.TILE;
+  const path = finder.find(state.player.x, state.player.y, wx, wy);
+  if (path) {
+    state.player.path = path; state.player.pathIdx = 0;
+    state.moveMarker = { x: path[path.length - 1].x, y: path[path.length - 1].y, t: 0 };
+    UI.toast('🗺️ กำลังเดินไปยังจุดที่คลิกบนมินิแมป...', 'good');
+  }
+});
+
+Net.init(state);
 UI.bootSequence(() => UI.refreshTitleMenu());
 requestAnimationFrame(frame);
 
@@ -1660,7 +1689,7 @@ window.addEventListener('beforeunload', () => { if (state.screen === 'play') sav
 /* เปิดให้ตรวจสอบจากภายนอก (ใช้ตอนทดสอบอัตโนมัติ) */
 window.__GRIAN__ = {
   state, view, UI, handlers, input, Audio, Settings, Particles, Camera, DayNight, HitStop, Perf,
-  VFX, Auto, AutoQ, GFX3D,
+  VFX, Auto, AutoQ, GFX3D, Net, hasFullSet,
   hasSave, listSlots, wipeSave,
   get finder() { return finder; },
   orderMove, openChest, beginCapture, travelTo, advanceClass,

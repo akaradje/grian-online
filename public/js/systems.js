@@ -166,7 +166,8 @@ export function doGacha(state, times) {
 export function tickBoss(state, dt) {
   const b = state.boss;
   if (!b.active && state.time >= b.nextAt) {
-    const e = createMonster('boss', state.world.bossSpot.x, state.world.bossSpot.y);
+    const bossId = state.world?.cyber ? 'boss_ai' : (state.world?.hell ? 'boss_collector' : 'boss');
+    const e = createMonster(bossId, state.world.bossSpot.x, state.world.bossSpot.y);
     b.entity = e;
     b.active = true;
     state.monsters.push(e);
@@ -473,7 +474,7 @@ export function applySave(state, d) {
   p.gems = d.gems ?? 160;
   p.tickets = d.tickets ?? 1;
   p.inv = Array.isArray(d.inv) ? d.inv : [];
-  p.equip = d.equip || { weapon: null, acc: null };
+  p.equip = { weapon: null, armor: null, acc: null, ...(d.equip || {}) };
   p.kills = d.kills || {};
   p.talks = d.talks || {};
   p.quests = d.quests || {};

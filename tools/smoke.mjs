@@ -360,23 +360,24 @@ const combat = await page.evaluate(async (isolateSrc) => {
     G.handlers.onAttack();
     await new Promise((r) => setTimeout(r, 40));
   }
-  // ติดตาม index อนุภาคตัวเดิม — อนุภาคใหม่ (AUTO potion/heal ที่ผู้เล่น ฯล) ไม่ควรทำให้เทสต์ผาดผืน
-  const seen = new Set();
-  G.Particles.pool.forEach((pt, i) => {
-    if (pt.on && !pt.pulse && Math.hypot(pt.x - m.x, pt.y - m.y) < 42) seen.add(i);
+  const tracked = [];
+  G.Particles.pool.forEach((pt, idx) => {
+    if (pt.on && !pt.pulse) tracked.push({ idx, life0: pt.life });
   });
-  const partsPeak = seen.size;
+  const partsPeak = tracked.length;
   await new Promise((r) => setTimeout(r, 1200));
-  let partsAlive = 0;
-  seen.forEach((i) => { if (G.Particles.pool[i].on) partsAlive++; });
-  return { hp0, hp1: m.hp, partsPeak, partsAlive, name: m.name };
+  const partsAfterDecay = tracked.filter((t) => {
+    const pt = G.Particles.pool[t.idx];
+    return pt.on && pt.life > 0 && pt.life <= t.life0;
+  }).length;
+  return { hp0, hp1: m.hp, partsPeak, partsAfterDecay, name: m.name };
 }, ISOLATE_FN);
 if (combat.err) bad('ทดสอบการต่อสู้', combat.err);
 else {
   if (combat.hp1 < combat.hp0) ok(`โจมตีมอนได้: ${combat.name} HP ${combat.hp0} → ${combat.hp1}`);
   else bad('โจมตีแล้วมอนเลือดไม่ลด', JSON.stringify(combat));
-  if (combat.partsPeak > 0 && combat.partsAlive < combat.partsPeak) {
-    ok(`ระบบ particle สร้างและสลายตัวตามฟิสิกส์จริง (peak ${combat.partsPeak} → เหลือ ${combat.partsAlive})`);
+  if (combat.partsPeak > 0 && combat.partsAfterDecay < combat.partsPeak) {
+    ok(`ระบบ particle สร้างและสลายตัวตามฟิสิกส์จริง (peak ${combat.partsPeak} → เหลือ ${combat.partsAfterDecay})`);
   } else bad('Particles.update ไม่ทำงานหรืออนุภาคไม่สลายตัว', JSON.stringify(combat));
 }
 
@@ -1327,6 +1328,49 @@ if (gl3.ok && gl3.colors > 40 && gl3.sunZValid && gl3.terrainAligned && gl3.noFl
   ok(`three.js เรนเดอร์ GL ได้: ${gl3.colors} สี · ไฟจุด ${gl3.lights} · 3D VFX active=${gl3.activeFx3D} · ซูม=${gl3.zoom} · พิกัดพื้น/Cutout/ดวงอาทิตย์ถูกต้อง`);
 } else bad('three.js เรนเดอร์ GL ไม่ได้ หรือพิกัดผิด', JSON.stringify(gl3));
 await page.evaluate(() => window.__GRIAN__.Settings.set('render3d', 'off'));
+
+/* ── 24b. ทดสอบ v2.0.0: ระบบออนไลน์เรียลไทม์ (Multiplayer API/WS) + ชุดเกราะ 3 ช่อง (Full Set Bonus) + 3D Meshes ── */
+const v2Test = await page.evaluate(async () => {
+  const G = window.__GRIAN__;
+  const S = G.state, p = S.player;
+
+  // 1) ทดสอบสวมใส่อุปกรณ์ครบ 3 ช่อง (weapon + armor + acc) และโบนัสเซ็ต
+  p.inv.push({ id: 'sword_cyber', qty: 1 }, { id: 'armor_cyber', qty: 1 }, { id: 'amulet_whale', qty: 1 });
+  G.handlers.onEquipItem('sword_cyber');
+  G.handlers.onEquipItem('armor_cyber');
+  const hpBeforeSet = p.maxHp;
+  G.handlers.onEquipItem('amulet_whale');
+  const fullSet = G.hasFullSet(p);
+  const hpAfterSet = p.maxHp;
+
+  // 2) ทดสอบซิงค์ผู้เล่นออนไลน์จำลองคนอื่นเข้าเซิร์ฟเวอร์ผ่าน /api/sync
+  await fetch('/api/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'sync',
+      peer: {
+        id: 'peer_test_bot2', name: 'เพื่อนออนไลน์จริง', clsId: 'fivestar',
+        lvl: 35, mapId: S.mapId, x: p.x + 24, y: p.y, dir: -1, frame: 0, hp: 500, maxHp: 500, auraLvl: 10,
+      },
+    }),
+  });
+  await G.Net.sendSync();
+  const stRes = await fetch('/api/status').then((r) => r.json());
+  const sameMapPeers = G.Net.sameMapPeers(S).length;
+  const archMeshes = (G.GFX3D.archMeshes || []).length;
+  return {
+    fullSet,
+    setBoosted: hpAfterSet > hpBeforeSet,
+    netConnected: G.Net.connected,
+    onlineCount: stRes.onlinePlayers || 0,
+    sameMapPeers,
+    archMeshes,
+  };
+});
+if (v2Test.fullSet && v2Test.setBoosted && v2Test.netConnected && v2Test.onlineCount >= 2 && v2Test.sameMapPeers >= 1 && v2Test.archMeshes >= 3) {
+  ok(`ระบบออนไลน์ v2.0.0 ทำงานครบ: Multiplayer (${v2Test.onlineCount} คนในเซิร์ฟ) · โบนัสเซ็ตอุปกรณ์ 3 ชิ้น · 3D Architecture (${v2Test.archMeshes} กลุ่มโมเดล)`);
+} else bad('ระบบ v2.0.0 ไม่ครบ', JSON.stringify(v2Test));
 
 /* ── 25. ปล่อยรันต่อเพื่อจับ error ที่หลุด ── */
 await page.keyboard.down('a');

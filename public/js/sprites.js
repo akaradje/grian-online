@@ -97,22 +97,36 @@ const NPC_PAL = {
 
 /* ─────────────── มนุษย์ 16×16 ─────────────── */
 function drawHuman(g, p, frame, o = {}) {
-  const yOff = frame === 1 ? 1 : 0;          // เดินแล้วตัวยวบ 1px
-  // หัว
+  const yOff = frame === 1 ? 1 : 0;
+  // ผ้าคลุมด้านหลัง (สำหรับสายเทพ/หัวหน้ากิลด์/แอดมิน)
+  if (o.cape) {
+    rc(g, 3, 8 + yOff, 10, 5, o.cape);
+    px(g, 3, 13, o.cape); px(g, 12, 13, o.cape);
+  }
+  // หัว + แรเงาคาง
   rc(g, 5, 3 + yOff, 6, 5, p.skin);
-  // ผม
-  rc(g, 4, 2 + yOff, 8, 2, p.hair);
-  rc(g, 4, 3 + yOff, 1, 3, p.hair);
-  rc(g, 11, 3 + yOff, 1, 3, p.hair);
-  // ตา
-  px(g, 6, 5 + yOff, p.eye || OUT);
-  px(g, 9, 5 + yOff, p.eye || OUT);
-  // ลำตัว
+  rc(g, 6, 7 + yOff, 4, 1, '#d9a57c');
+  // ผม + ไฮไลต์เงาผมสไตล์อนิเมะ RPG
+  rc(g, 4, 1 + yOff, 8, 2, p.hair);
+  rc(g, 4, 3 + yOff, 1, 4, p.hair);
+  rc(g, 11, 3 + yOff, 1, 4, p.hair);
+  px(g, 6, 3 + yOff, p.hair); px(g, 9, 3 + yOff, p.hair);
+  px(g, 6, 2 + yOff, 'rgba(255,255,255,0.28)');
+  px(g, 8, 2 + yOff, 'rgba(255,255,255,0.22)');
+  // ตา 2 ชั้น (ตาขาว + ตาดำ)
+  px(g, 6, 4 + yOff, '#ffffff'); px(g, 9, 4 + yOff, '#ffffff');
+  px(g, 6, 5 + yOff, p.eye || OUT); px(g, 9, 5 + yOff, p.eye || OUT);
+  // ลำตัว + เกราะไหล่ + เข็มขัดทอง
   rc(g, 5, 8 + yOff, 6, 5, p.shirt);
-  // แขน
-  rc(g, 4, 8 + yOff, 1, 3, p.skin);
-  rc(g, 11, 8 + yOff, 1, 3, p.skin);
-  // ขา
+  rc(g, 4, 8 + yOff, 2, 2, p.shirt);
+  rc(g, 10, 8 + yOff, 2, 2, p.shirt);
+  px(g, 7, 8 + yOff, '#ffffff'); px(g, 8, 8 + yOff, '#ffffff'); // คอปก
+  rc(g, 5, 11 + yOff, 6, 1, '#261c14'); // เข็มขัด
+  px(g, 7, 11 + yOff, '#ffc94d'); px(g, 8, 11 + yOff, '#ffc94d'); // หัวเข็มขัดทอง
+  // แขน + มือ
+  rc(g, 3, 9 + yOff, 1, 3, p.skin);
+  rc(g, 12, 9 + yOff, 1, 3, p.skin);
+  // ขา + รองเท้าบูต
   if (frame === 0) {
     rc(g, 5, 13, 2, 2, p.pants); rc(g, 9, 13, 2, 2, p.pants);
     rc(g, 5, 15, 2, 1, '#241d33'); rc(g, 9, 15, 2, 1, '#241d33');
@@ -120,29 +134,55 @@ function drawHuman(g, p, frame, o = {}) {
     rc(g, 4, 13, 2, 2, p.pants); rc(g, 10, 13, 2, 2, p.pants);
     rc(g, 4, 15, 2, 1, '#241d33'); rc(g, 10, 15, 2, 1, '#241d33');
   }
-  // ของประดับเฉพาะตัว
+  // หมวก / เครื่องประดับหัว
   if (o.hat === 'wizard') {
-    rc(g, 7, -0 + yOff, 2, 1, '#4a3f8a');
-    rc(g, 6, 1 + yOff, 4, 1, '#4a3f8a');
-    rc(g, 4, 2 + yOff, 8, 1, '#3a2f6a');
-    rc(g, 7, 0 + yOff, 2, 1, '#e8c25a');
+    rc(g, 7, 0 + yOff, 2, 1, '#4a3f8a');
+    rc(g, 5, 1 + yOff, 6, 1, '#4a3f8a');
+    rc(g, 3, 2 + yOff, 10, 1, '#3a2f6a');
+    px(g, 7, 1 + yOff, '#ffc94d');
   } else if (o.hat === 'cap') {
-    rc(g, 4, 2 + yOff, 8, 1, '#c0392b');
-    rc(g, 3, 3 + yOff, 2, 1, '#c0392b');
-  } else if (o.hat === 'crown') {
-    rc(g, 5, 1 + yOff, 6, 1, '#e8c25a');
-    px(g, 6, 0 + yOff, '#e8c25a'); px(g, 8, 0 + yOff, '#e8c25a'); px(g, 10, 0 + yOff, '#e8c25a');
+    rc(g, 4, 1 + yOff, 8, 2, '#c0392b');
+    rc(g, 3, 2 + yOff, 3, 1, '#e74c3c');
+  } else if (o.hat === 'crown' || o.crown) {
+    rc(g, 5, 1 + yOff, 6, 2, '#ffc94d');
+    px(g, 5, 0 + yOff, '#fff2c0'); px(g, 8, 0 + yOff, '#ff4d6b'); px(g, 10, 0 + yOff, '#fff2c0');
   } else if (o.hat === 'headset') {
-    rc(g, 4, 3 + yOff, 1, 4, '#2f9e8f');
-    rc(g, 11, 3 + yOff, 1, 4, '#2f9e8f');
-    rc(g, 4, 2 + yOff, 8, 1, '#2f9e8f');
+    rc(g, 3, 3 + yOff, 1, 4, '#4ae8ff');
+    rc(g, 12, 3 + yOff, 1, 4, '#4ae8ff');
+    rc(g, 4, 1 + yOff, 8, 1, '#2f9e8f');
   }
   if (o.glasses) {
-    rc(g, 5, 5 + yOff, 2, 1, '#111');
-    rc(g, 9, 5 + yOff, 2, 1, '#111');
+    rc(g, 5, 4 + yOff, 2, 2, '#111');
+    rc(g, 9, 4 + yOff, 2, 2, '#111');
+    px(g, 6, 4 + yOff, '#7fe0ff'); px(g, 10, 4 + yOff, '#7fe0ff');
     px(g, 7, 5 + yOff, '#111');
   }
-  if (o.badge) { rc(g, 6, 9 + yOff, 2, 2, '#e8c25a'); }
+  if (o.badge) { rc(g, 6, 9 + yOff, 2, 2, '#ffc94d'); }
+  // อาวุธประจำตัวในมือขวา
+  if (o.weapon === 'sword') {
+    rc(g, 13, 3 + yOff, 2, 7, '#dce6f2');
+    px(g, 13, 3 + yOff, '#ffffff');
+    rc(g, 12, 9 + yOff, 4, 1, '#ffc94d');
+    px(g, 13, 10 + yOff, '#8a5c2e');
+  } else if (o.weapon === 'staff') {
+    rc(g, 13, 4 + yOff, 1, 9, '#8a5c2e');
+    rc(g, 12, 2 + yOff, 3, 3, '#ff5f3c');
+    px(g, 13, 3 + yOff, '#fff2c0');
+  } else if (o.weapon === 'dagger') {
+    rc(g, 13, 6 + yOff, 2, 5, '#ff4d6b');
+    px(g, 14, 7 + yOff, '#ffffff');
+    rc(g, 1, 7 + yOff, 2, 4, '#ff4d6b');
+  } else if (o.weapon === 'cyber') {
+    rc(g, 13, 3 + yOff, 2, 8, '#4ae8ff');
+    px(g, 14, 4 + yOff, '#ff4d8a'); px(g, 14, 7 + yOff, '#5fe89b');
+  } else if (o.weapon === 'rapier') {
+    rc(g, 13, 2 + yOff, 1, 8, '#fff2c0');
+    rc(g, 12, 9 + yOff, 3, 2, '#ffc94d');
+  } else if (o.weapon === 'hammer') {
+    rc(g, 13, 5 + yOff, 1, 8, '#6b7280');
+    rc(g, 11, 3 + yOff, 4, 3, '#b98bff');
+    px(g, 12, 4 + yOff, '#ffffff');
+  }
 }
 
 /* ─────────────── สร้างสไปรต์ทั้งหมด ─────────────── */
@@ -223,14 +263,19 @@ export function buildSprites() {
   const P = 16;
   const T = 16;
 
-  /* ── ผู้เล่น: 6 อาชีพ × 2 เฟรมเดิน ── */
+  /* ── ผู้เล่น: 6 อาชีพ × 2 เฟรมเดิน (พร้อมอาวุธและเครื่องประดับประจำคลาส) ── */
+  const heroOpts = {
+    loot:     { weapon: 'sword' },
+    debt:     { hat: 'wizard', weapon: 'staff' },
+    troll:    { weapon: 'dagger' },
+    cafe:     { hat: 'headset', weapon: 'cyber', glasses: true },
+    fivestar: { hat: 'crown', weapon: 'rapier', cape: '#c0392b' },
+    admin:    { hat: 'cap', badge: true, weapon: 'hammer', cape: '#2b3a55' },
+  };
   for (const [cls, pal] of Object.entries(CLASS_PAL)) {
     const frames = [0, 1].map((f) => {
-      const o = {};
-      if (cls === 'cafe') o.hat = 'headset';
-      if (cls === 'fivestar') o.crown = true;
       const c = makeCanvas(P, P);
-      drawHuman(c.getContext('2d'), pal, f, o);
+      drawHuman(c.getContext('2d'), pal, f, heroOpts[cls] || {});
       return addOutline(c, OUT);
     });
     reg('hero_' + cls, frames);
@@ -350,6 +395,47 @@ export function buildSprites() {
     rc(g, 1, 14 + y, 4, 1, '#3f6fb5');
     line(g, 20, 8, 23, 3, '#e04b4b');
     rc(g, 19, 8, 2, 2, '#e04b4b');
+    return addOutline(c, OUT);
+  }), 24, 24);
+
+  /* ── บอสโลกโซน 2 (พญามารทวงหนี้นอกระบบ) 24×24 ── */
+  reg('boss_collector', [0, 1].map((f) => {
+    const c = makeCanvas(24, 24), g = c.getContext('2d');
+    const y = f === 1 ? 1 : 0;
+    // ปีกไฟนรก + เกราะมาร
+    rc(g, 2, 8 + y, 4, 9, '#5a1818'); rc(g, 18, 8 + y, 4, 9, '#5a1818');
+    rc(g, 6, 9 + y, 12, 10, '#8a2418');
+    rc(g, 8, 11 + y, 8, 6, '#ffc94d'); // เกราะอกทองคำ
+    rc(g, 7, 3 + y, 10, 7, '#c0392b');  // หัวพญามาร
+    // เขามารคู่ใหญ่
+    line(g, 7, 4 + y, 2, 0 + y, '#ffc94d'); line(g, 16, 4 + y, 21, 0 + y, '#ffc94d');
+    rc(g, 8, 6 + y, 3, 2, '#fff2c0'); rc(g, 13, 6 + y, 3, 2, '#fff2c0');
+    // ดาบไฟทวงหนี้ + สมุดบัญชีหนังหมา
+    rc(g, 20, 2 + y, 3, 14, '#ff8f3c');
+    rc(g, 21, 3 + y, 1, 11, '#fff2c0');
+    rc(g, 8, 19, 3, 4, '#3a1414'); rc(g, 13, 19, 3, 4, '#3a1414');
+    return addOutline(c, OUT);
+  }), 24, 24);
+
+  /* ── บอสโลกโซน 3 (AI แอดมินคลั่ง GPT-999) 24×24 ── */
+  reg('boss_ai', [0, 1].map((f) => {
+    const c = makeCanvas(24, 24), g = c.getContext('2d');
+    const y = f === 1 ? 1 : 0;
+    // ปีกโดรนไซเบอร์ 4 แฉก
+    rc(g, 1, 5 + y, 4, 12, '#1f365c'); rc(g, 19, 5 + y, 4, 12, '#1f365c');
+    rc(g, 2, 7 + y, 2, 8, f ? '#4ae8ff' : '#ff4d8a');
+    rc(g, 20, 7 + y, 2, 8, f ? '#ff4d8a' : '#4ae8ff');
+    // แกนกลางหุ่นรบ AI
+    rc(g, 6, 4 + y, 12, 14, '#2a344a');
+    rc(g, 7, 5 + y, 10, 6, '#0d121f');
+    // ดวงตาเลเซอร์สแกน
+    rc(g, 8, 7 + y, 8, 2, '#ff4d6b');
+    px(g, 11 + (f ? 2 : -1), 7 + y, '#ffffff');
+    // แกนพลังงาน RGB กลางอก
+    ell(g, 12, 14 + y, 3, 3, '#4ae8ff');
+    px(g, 12, 14 + y, '#ffffff');
+    // วงแหวนลอยใต้ฐาน
+    rc(g, 7, 20, 10, 2, '#b98bff');
     return addOutline(c, OUT);
   }), 24, 24);
 

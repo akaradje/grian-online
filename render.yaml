@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: grian-online
+    runtime: node
+    plan: free
+    buildCommand: echo "Zero external dependencies — ready to run"
+    startCommand: node serve.mjs
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production

@@ -234,7 +234,19 @@ export const MONSTERS = {
     id: 'whale', name: 'สุลต่านเติมหนัก', sprite: 'whale', lvl: 22, cyber: true,
     hp: 420, atk: 34, def: 16, spd: 56, exp: 260, gold: 240, ai: 'chase', aggro: 190,
     drainsGold: true,
-    drops: [['sword_cyber', 0.09], ['amulet_whale', 0.09], ['gem', 0.18], ['protect_charm', 0.15], ['gacha_ticket', 0.15]],
+    drops: [['sword_cyber', 0.09], ['amulet_whale', 0.09], ['armor_cyber', 0.08], ['gem', 0.18], ['protect_charm', 0.15], ['gacha_ticket', 0.15]],
+  },
+  boss_collector: {
+    id: 'boss_collector', name: 'พญามารทวงหนี้นอกระบบ', sprite: 'boss_collector', lvl: 22,
+    hp: 2400, atk: 42, def: 14, spd: 52, exp: 950, gold: 1200, ai: 'boss', aggro: 240, boss: true,
+    taunt: 'พญามารทวงหนี้: ดอกเบี้ยร้อยละ 99 ถึงกำหนดชำระด้วยชีวิตแล้ว!',
+    drops: [['armor_hell', 0.90], ['protect_charm', 1.0], ['upgrade_stone', 1.0], ['gacha_ticket', 0.9]],
+  },
+  boss_ai: {
+    id: 'boss_ai', name: 'AI แอดมินคลั่ง (GPT-999)', sprite: 'boss_ai', lvl: 30,
+    hp: 3600, atk: 58, def: 20, spd: 58, exp: 1650, gold: 2200, ai: 'boss', aggro: 260, boss: true,
+    taunt: 'AI แอดมินคลั่ง: ตรวจพบผู้เล่นที่มีความสุข — กำลังดำเนินการแบนถาวร!',
+    drops: [['armor_cyber', 0.95], ['sword_cyber', 0.85], ['amulet_whale', 0.85], ['protect_charm', 1.0]],
   },
 };
 
@@ -304,6 +316,7 @@ export const UPGRADE = {
   breakChance: [0, 0, 0, 0, 0, 0, 0, 0.12, 0.22, 0.35],
   statPerLvl: {
     weapon: { atk: 3, luck: 1 },
+    armor: { def: 3, hp: 25, atk: 1 },
     acc: { atk: 2, def: 1, luck: 2 },
   },
   auras: {
@@ -361,6 +374,16 @@ export const ITEMS = {
                     desc: 'ป้ายห้อยคอผู้สนับสนุนหลักของเซิร์ฟ ใส่แล้วแอดมินเกรงใจ' },
   exp_drink:      { name: 'เครื่องดื่มชูกำลังคูณสอง', icon: '🥫', rarity: 'rare',   kind: 'use', heal: 120, healMp: 60, buffAtk: 1.3, buffSpd: 1.25, buffDur: 20,
                     desc: 'ฟื้น 120 HP / 60 MP และเพิ่ม ATK +30%, SPD +25% นาน 20 วินาที' },
+
+  /* ── ชุดเกราะใหม่ v2.0.0 (ช่องสวมใส่ armor + โบนัสเซ็ตเมื่อใส่ครบ 3 ช่อง) ── */
+  armor_shirt:    { name: 'เสื้อยืดแถมงานเกม (XL)',   icon: '👕', rarity: 'common', kind: 'equip', slot: 'armor', def: 5, hp: 45,
+                    desc: 'เสื้อยืดสกรีนโลโก้เกมที่ปิดเซิร์ฟไปแล้ว กันลมได้นิดหน่อย' },
+  armor_cafe:     { name: 'เสื้อกันหนาวร้านเน็ต',     icon: '🧥', rarity: 'rare',   kind: 'equip', slot: 'armor', def: 12, hp: 100, luck: 4,
+                    desc: 'เสื้อกันหนาวประจำตู้แอร์ตก ไม่ได้ซักมา 3 เดือน มอนไม่กล้าเข้าใกล้' },
+  armor_hell:     { name: 'เกราะกระดูกไฟนรก',       icon: '🛡️', rarity: 'epic',   kind: 'equip', slot: 'armor', def: 22, hp: 190, atk: 8,
+                    desc: 'เกราะหลอมจากลาวาดินแดนมาร อุ่นสบายแม้นั่งเล่นในห้องแอร์' },
+  armor_cyber:    { name: 'เกราะ RGB สุลต่านไซเบอร์', icon: '🦾', rarity: 'legend', kind: 'equip', slot: 'armor', def: 36, hp: 340, atk: 15, luck: 12,
+                    desc: 'ชุดเกราะไฟวิ่ง 16.8 ล้านสี กินไฟบ้านเดือนละ 4,000 บาท' },
 };
 
 /* ─────────────────────── เควสต์ ─────────────────────── */

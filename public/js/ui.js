@@ -11,8 +11,9 @@ import {
 import { SPR } from './sprites.js';
 import {
   addItem, removeItem, countItem, recalcPlayer, effAtk, effSpd, dropBonus,
-  playerSkills, playerAura, pvpRank, partyBots,
+  playerSkills, playerAura, hasFullSet, pvpRank, partyBots,
 } from './entities.js';
+import { Net } from './net.js';
 import {
   acceptQuest, completeQuest, questById, questProgress, doGacha, saveGame,
   wipeSave, listSlots, SAVE_SLOTS, exportSave, importSave, applySave,
@@ -522,6 +523,13 @@ export const UI = {
       put('b' + b._uid, b.x, b.y,
         `${prefix}${esc(b.name)} <span style="color:#9aa4c8">${b.lvl}</span>`, bCls, hpR, 16);
     }
+    for (const peer of Net.sameMapPeers(state)) {
+      const hpR = (peer.hp || 100) / Math.max(1, peer.maxHp || 100);
+      const auraTxt = peer.auraLvl >= 5 ? ` <span style="color:#ffc94d">+${peer.auraLvl}</span>` : '';
+      put('peer_' + peer.id, peer.renderX ?? peer.x, peer.renderY ?? peer.y,
+        `🌐 ${esc(peer.name)}${auraTxt} <span style="color:#5fe89b">Lv.${peer.lvl}</span>`,
+        peer.pvpMode ? 'bot pk' : 'bot party', hpR, 18);
+    }
     for (const pt of state.pets) {
       put('p' + pt.uid, pt.x, pt.y,
         `${pt.species.icon} ${esc(pt.nickname)} <span style="color:${pt.rarity.color}">Lv.${pt.lvl}</span>`,
@@ -928,7 +936,15 @@ export const UI = {
     const ptBots = partyBots(state);
     const allBots = (state.bots || []).filter((b) => !b.afk);
 
+    const realPeers = Array.from(Net.peers.values());
+    const netLabel = Net.connected ? `ออนไลน์สด (${Net.mode.toUpperCase()}) · ผู้เล่นอื่น ${realPeers.length} คน` : 'โหมดเล่นคนเดียว / กำลังเชื่อมต่อ...';
     box.innerHTML = `
+      <div class="social-sec">
+        <h4><span>🌐 เซิร์ฟเวอร์ออนไลน์เรียลไทม์ (Multiplayer)</span><span class="small" style="color:${Net.connected ? '#5fe89b' : '#ffc94d'}">${netLabel}</span></h4>
+        <p>${realPeers.length > 0
+          ? realPeers.map((pr) => `🟢 <b>${esc(pr.name)}</b> (Lv.${pr.lvl} · แมพ ${esc(pr.mapId)})`).join(' · ')
+          : 'เปิดหน้าเว็บนี้ในอีกแท็บหรืออีกเครื่องเพื่อเจอผู้เล่นจริงแบบเรียลไทม์ได้ทันที!'}</p>
+      </div>
       <div class="social-sec">
         <h4><span>🗺️ วาร์ปด่วนข้ามแมพ (3 โซน)</span><span class="small muted">อยู่: ${esc(state.world.zoneLabel)}</span></h4>
         <p>ไม่ต้องเดินหาประตู Portal เองให้เมื่อยขา — กดวาร์ปข้ามโซนได้ทันที</p>
@@ -1067,13 +1083,13 @@ export const UI = {
     let upHtml = '';
     const charms = countItem(p, UPGRADE.protectItem);
     const aura = playerAura(p);
-    for (const [slot, label] of [['weapon', 'อาวุธ'], ['acc', 'เครื่องประดับ']]) {
-      const eq = p.equip[slot];
+    for (const [slot, label] of [['weapon', 'อาวุธ'], ['armor', 'ชุดเกราะ'], ['acc', 'เครื่องประดับ']]) {
+      const eq = p.equip?.[slot];
       if (!eq) { upHtml += `<div class="up-row empty"><span>${label}</span><em>ไม่ได้สวม</em></div>`; continue; }
       const ed = ITEMS[eq.id];
       const lvl = eq.lvl || 0;
-      const per = UPGRADE.statPerLvl?.[slot] || { atk: 2, def: 0, luck: 1 };
-      const bonusTxt = `+${lvl * (per.atk || 0)} ATK${per.def ? ` · +${lvl * per.def} DEF` : ''} · +${lvl * (per.luck || 0)} LUCK`;
+      const per = UPGRADE.statPerLvl?.[slot] || { atk: 2, def: 0, luck: 1, hp: 0 };
+      const bonusTxt = `${per.atk ? `+${lvl * per.atk} ATK ` : ''}${per.def ? `+${lvl * per.def} DEF ` : ''}${per.hp ? `+${lvl * per.hp} HP ` : ''}${per.luck ? `+${lvl * per.luck} LUCK` : ''}`.trim();
       const nextRate = UPGRADE.rates[lvl];
       const gold = UPGRADE.goldPerTry(lvl);
       const breakC = lvl >= UPGRADE.breakFrom ? UPGRADE.breakChance[lvl] : 0;
@@ -1101,7 +1117,7 @@ export const UI = {
       ${itemHeader}
       <div class="up-title">
         อัพเกรดอุปกรณ์ ${aura ? `<span style="color:${aura.color}">(${esc(aura.name)} +${aura.lvl})</span>` : ''}
-        <span class="muted small">— ${esc(UPGRADE.note)}</span>
+        <span class="small" style="color:${hasFullSet(p) ? '#5fe89b' : '#9aa4c8'}">${hasFullSet(p) ? '✨ โบนัสเซ็ตครบ 3 ชิ้นทำงานอยู่ (HP/ATK +10%, DEF +5)' : '(สวมครบ 3 ช่องรับโบนัสเซ็ต HP/ATK +10%)'}</span>
       </div>
       ${upHtml}
       <div style="margin-top:9px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
@@ -1374,7 +1390,9 @@ export const UI = {
   showShop(state) {
     const p = state.player;
     const stock = [['hp_potion', 45], ['mp_potion', 35], ['exp_drink', 140], ['upgrade_stone', 220],
-      ['protect_charm', 550], ['capture_ball', 95], ['pet_potion', 65], ['hp_potion_fake', 3], ['bread_expired', 2]];
+      ['protect_charm', 550], ['capture_ball', 95], ['pet_potion', 65],
+      ['armor_shirt', 120], ['armor_cafe', 320], ['armor_hell', 680],
+      ['ring_fake', 180], ['sword_plus9', 450], ['hp_potion_fake', 3]];
     this.el['dlg-text'].innerHTML = 'ร้านค้า (ของแท้ 100% · ของก๊อป 60%)<br><span class="small muted">'
       + stock.map(([id, price]) => `${ITEMS[id].icon} ${esc(ITEMS[id].name)} — ${price} เงิน`).join('<br>')
       + `</span><br><span class="small muted">เงินของคุณ: ${Math.floor(p.gold).toLocaleString()}</span>`;

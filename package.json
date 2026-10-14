@@ -1,0 +1,16 @@
+{
+  "name": "grian-online",
+  "version": "2.0.0",
+  "description": "เกรียนออนไลน์ (GRIAN ONLINE) — Thai Satirical 3D/2D Browser MMORPG with Real-Time Multiplayer",
+  "type": "module",
+  "main": "serve.mjs",
+  "scripts": {
+    "start": "node serve.mjs",
+    "dev": "node serve.mjs 8731",
+    "test": "node tools/smoke.mjs 8731",
+    "test:3d": "node tools/check-r3d.mjs 8731"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

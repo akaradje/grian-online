@@ -26,11 +26,16 @@ export function pvpRank(p) {
 }
 
 /* ── ออร่าจากระดับการตีบวก (+5 / +7 / +9 / +10) ── */
+export function hasFullSet(p) {
+  return !!(p?.equip?.weapon && p?.equip?.armor && p?.equip?.acc);
+}
+
 export function playerAura(p) {
   if (!p || !p.equip) return null;
   const wLvl = p.equip.weapon?.lvl || 0;
+  const arLvl = p.equip.armor?.lvl || 0;
   const aLvl = p.equip.acc?.lvl || 0;
-  const best = Math.max(wLvl, aLvl);
+  const best = Math.max(wLvl, arLvl, aLvl);
   if (best >= 10) return { ...UPGRADE.auras[10], lvl: best };
   if (best >= 9) return { ...UPGRADE.auras[9], lvl: best };
   if (best >= 7) return { ...UPGRADE.auras[7], lvl: best };
@@ -47,7 +52,7 @@ export function createPlayer(name, clsId) {
     lvl: 1, exp: 0,
     base: { ...cls.base },
     gold: 60, gems: 160, tickets: 1,
-    inv: [], equip: { weapon: null, acc: null },
+    inv: [], equip: { weapon: null, armor: null, acc: null },
     x: 0, y: 0, prevX: 0, prevY: 0, dir: 1, frame: 0, animT: 0,
     path: null, pathIdx: 0,              // เส้นทางจากการคลิกเดิน
     attackCd: 0, cooldowns: {}, buffs: [], weak: 0, poison: 0,
@@ -71,6 +76,7 @@ export function createPlayer(name, clsId) {
   addItem(p, 'hp_potion', 3);
   addItem(p, 'hp_potion_fake', 2);
   addItem(p, 'upgrade_stone', 3);
+  addItem(p, 'armor_shirt', 1);
   return p;
 }
 
@@ -117,16 +123,23 @@ export function recalcPlayer(p) {
     }
   }
 
-  // โบนัสอุปกรณ์ + ระดับการตีบวก (+1 ถึง +10)
-  for (const slot of ['weapon', 'acc']) {
-    const it = p.equip[slot];
+  // โบนัสอุปกรณ์ + ระดับการตีบวก (+1 ถึง +10) ครบทั้ง 3 ช่อง (อาวุธ · ชุดเกราะ · เครื่องประดับ)
+  for (const slot of ['weapon', 'armor', 'acc']) {
+    const it = p.equip?.[slot];
     if (!it) continue;
     const d = ITEMS[it.id]; if (!d) continue;
     const upLvl = it.lvl || 0;
-    const per = UPGRADE.statPerLvl?.[slot] || { atk: 2, def: 0, luck: 1 };
+    const per = UPGRADE.statPerLvl?.[slot] || { atk: 2, def: 0, luck: 1, hp: 0 };
+    maxHp += (d.hp || 0) + upLvl * (per.hp || 0);
     atk += (d.atk || 0) + upLvl * (per.atk || 0);
     def += (d.def || 0) + upLvl * (per.def || 0);
     luck += (d.luck || 0) + upLvl * (per.luck || 0);
+  }
+  // โบนัสเซ็ตอุปกรณ์ครบ 3 ชิ้น (Full Set Bonus)
+  if (hasFullSet(p)) {
+    maxHp = Math.round(maxHp * 1.10);
+    atk = Math.round(atk * 1.10);
+    def += 5;
   }
 
   // โบนัสยศ PvP
