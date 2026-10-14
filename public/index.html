@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>เกรียนออนไลน์ — GRIAN ONLINE</title>
+<meta name="description" content="MMORPG แฟนตาชีล้อเลียนเกมดัง เล่นได้ในเบราว์เซอร์">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230a0d18'/%3E%3Crect x='4' y='2' width='8' height='2' fill='%23ffc94d'/%3E%3Crect x='3' y='4' width='10' height='6' fill='%23f0c49b'/%3E%3Crect x='5' y='6' width='2' height='2' fill='%23111'/%3E%3Crect x='9' y='6' width='2' height='2' fill='%23111'/%3E%3Crect x='4' y='10' width='8' height='5' fill='%233f6fb5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;800&family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="rotate-hint">↻ หมุนจอแนวนอนแล้วเล่นได้ดียิ่งขึ้น</div>
+
+<!-- ══════════════ หน้าแรก ══════════════ -->
+<section id="scr-title" class="screen active">
+  <div class="title-bg"></div>
+  <div class="title-inner">
+    <div class="logo-wrap">
+      <div class="logo-sub">เซิร์ฟเวอร์ใหม่ เปิดวันนี้!</div>
+      <h1 class="logo">เกรียน<span>ออนไลน์</span></h1>
+      <div class="logo-en">G R I A N &nbsp; O N L I N E</div>
+      <div class="logo-tag">ตำนานผู้กล้าที่ไม่ได้อยากเป็นผู้กล้า</div>
+    </div>
+
+    <div id="boot" class="boot">
+      <div class="boot-msg" id="boot-msg">กำลังเชื่อมต่อเซิร์ฟเวอร์...</div>
+      <div class="boot-bar"><i id="boot-fill"></i></div>
+      <div class="boot-pct" id="boot-pct">0%</div>
+    </div>
+
+    <div id="title-menu" class="title-menu hidden">
+      <div class="slot-list" id="slot-list"></div>
+      <div class="title-actions">
+        <button class="btn btn-primary" id="btn-enter">สร้างตัวละครใหม่</button>
+        <button class="btn btn-ghost" id="btn-wipe">ลบเซฟทั้งหมด</button>
+      </div>
+      <details class="save-io">
+        <summary>ย้ายเซฟไปเครื่องอื่น (ส่งออก/นำเข้าโค้ด)</summary>
+        <textarea id="save-code" rows="3" placeholder="วางโค้ดเซฟที่นี่เพื่อนำเข้า หรือกดส่งออกเพื่อคัดลอก"></textarea>
+        <div class="save-io-btns">
+          <button class="btn btn-mini" id="btn-export">ส่งออกเซฟช่อง 1</button>
+          <button class="btn btn-mini" id="btn-import">นำเข้าโค้ด</button>
+        </div>
+      </details>
+      <p class="tiny">กด <kbd>Enter</kbd> เพื่อเข้าเกม · เกมนี้เป็นงานล้อเลียน ไม่มีส่วนเกี่ยวข้องกับเกมใด ๆ จริง</p>
+    </div>
+  </div>
+  <div class="title-foot">
+    <span>v0.5.0 · ยังไม่เปิดให้เติมเงิน</span>
+    <span id="title-online">ออนไลน์ 0 คน</span>
+  </div>
+</section>
+
+<!-- ══════════════ สร้างตัวละคร ══════════════ -->
+<section id="scr-create" class="screen">
+  <div class="create-wrap">
+    <header class="create-head">
+      <h2>สร้างตัวละคร</h2>
+      <p class="muted">เลือกอาชีพ — ทุกอาชีพเก่งพอกันหมด เพราะเราไม่บาลานซ์</p>
+    </header>
+
+    <div class="create-body">
+      <div class="create-left">
+        <label class="field">
+          <span>ชื่อตัวละคร</span>
+          <input id="in-name" maxlength="16" placeholder="เช่น xX_สายย่อ_Xx" autocomplete="off">
+          <em class="hint" id="name-hint">ความยาว 2–16 ตัวอักษร</em>
+        </label>
+        <button class="btn btn-ghost" id="btn-random-name">สุ่มชื่อแบบเด็กเน็ต</button>
+
+        <div class="preview-card">
+          <canvas id="prev-canvas" width="96" height="96"></canvas>
+          <div class="preview-stats" id="prev-stats"></div>
+        </div>
+      </div>
+
+      <div class="create-right">
+        <div class="class-grid" id="class-grid"></div>
+      </div>
+    </div>
+
+    <footer class="create-foot">
+      <button class="btn" id="btn-back-title">ย้อนกลับ</button>
+      <button class="btn btn-primary" id="btn-start" disabled>เริ่มการผจญภัย</button>
+    </footer>
+  </div>
+</section>
+
+<!-- ══════════════ เกม ══════════════ -->
+<section id="scr-play" class="screen">
+
+  <div id="stage">
+    <canvas id="world-3d"></canvas>
+    <canvas id="world"></canvas>
+    <div id="nametags"></div>
+    <div id="floaters"></div>
+    <div id="levelup" class="levelup hidden"></div>
+    <div id="boss-alert" class="boss-alert hidden"></div>
+    <div id="zone-banner" class="zone-banner hidden"></div>
+    <div id="skill-banner" class="skill-banner"></div>
+
+    <!-- ปุ่มบังคับแบบแตะ (มือถือ/แท็บเล็ต) — ซ่อนบนเดสก์ท็อป -->
+    <div id="touch-ui" class="touch-hidden">
+      <div id="joystick"><i id="joy-knob"></i></div>
+      <div id="touch-btns">
+        <button id="btn-touch-auto" class="tbtn tbtn-round" title="AUTO">🤖</button>
+        <button id="btn-touch-atk" class="tbtn tbtn-atk" title="โจมตี">⚔️</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="perfhud" class="perfhud"></div>
+
+  <!-- มุมซ้ายบน: การ์ดผู้เล่น -->
+  <div id="card-player" class="hud hud-tl">
+    <div class="pc-top">
+      <canvas id="pc-face" width="32" height="32"></canvas>
+      <div class="pc-id">
+        <div class="pc-name"><span id="pc-lv">1</span> <b id="pc-name">—</b></div>
+        <div class="pc-class" id="pc-class">—</div>
+      </div>
+    </div>
+    <div class="bars">
+      <div class="bar bar-hp"><i id="bar-hp"></i><span id="txt-hp">0/0</span></div>
+      <div class="bar bar-mp"><i id="bar-mp"></i><span id="txt-mp">0/0</span></div>
+      <div class="bar bar-xp"><i id="bar-xp"></i><span id="txt-xp">0%</span></div>
+    </div>
+    <div class="pc-wallet">
+      <span title="เงินในเกม">💰 <b id="pc-gold">0</b></span>
+      <span title="เพชร">💎 <b id="pc-gem">0</b></span>
+      <span title="ตั๋วกาชา">🎫 <b id="pc-ticket">0</b></span>
+    </div>
+  </div>
+
+  <!-- ซ้ายบน ใต้การ์ดผู้เล่น: สัตว์เลี้ยงที่ใช้งานอยู่ -->
+  <div id="pet-hud" class="hud pet-hud hidden">
+    <canvas id="pet-face" width="28" height="28"></canvas>
+    <div class="ph-main">
+      <div class="ph-top"><b id="ph-name">—</b><span id="ph-lv">Lv.1</span></div>
+      <div class="bar bar-php"><i id="bar-php"></i><span id="txt-php">0/0</span></div>
+    </div>
+  </div>
+
+  <!-- มุมขวาบน: ข้อมูลเซิร์ฟเวอร์ + มินิแมป -->
+  <div id="card-server" class="hud hud-tr">
+    <div class="srv-row">
+      <span class="dot"></span> <b>เซิร์ฟเวอร์: ระนาวรก-1</b>
+    </div>
+    <div class="srv-row small">
+      <span id="srv-online">ออนไลน์ 0 คน</span>
+      <span id="srv-ping">ping 12ms</span>
+    </div>
+    <div class="srv-row small">
+      <span id="srv-time">☀️ กลางวัน</span>
+      <span class="muted">เวลาในเกม</span>
+    </div>
+    <canvas id="minimap" width="150" height="110"></canvas>
+    <div class="boss-line">
+      <span>บอสโลก</span>
+      <b id="boss-timer">--:--</b>
+    </div>
+  </div>
+
+  <!-- เป้าหมายที่คลิกเลือก -->
+  <div id="target-box" class="hud target-box hidden">
+    <div class="tb-name" id="tb-name">—</div>
+    <div class="bar bar-thp"><i id="bar-thp"></i><span id="txt-thp">0/0</span></div>
+  </div>
+
+  <!-- ซ้ายกลาง: ตัวติดตามเควสต์ -->
+  <div id="card-quest" class="hud hud-ml">
+    <div class="qt-title">📜 เควสต์ที่รับไว้</div>
+    <ul id="quest-list"><li class="muted small">ยังไม่มีเควสต์</li></ul>
+  </div>
+
+  <!-- กลางล่าง: แชท -->
+  <div id="chatbox" class="hud">
+    <div id="chat-tabs">
+      <button class="ctab active" data-ch="world">โลก</button>
+      <button class="ctab" data-ch="trade">ซื้อขาย</button>
+      <button class="ctab" data-ch="party">ปาร์ตี้</button>
+      <button class="ctab" data-ch="system">ระบบ</button>
+    </div>
+    <div id="chat-log"></div>
+    <form id="chat-form" autocomplete="off">
+      <input id="chat-input" maxlength="70" placeholder="พิมพ์ข้อความ... (Enter เพื่อส่ง)">
+      <button class="btn btn-mini" type="submit">ส่ง</button>
+    </form>
+  </div>
+
+  <!-- ขวาล่าง: ฮอตบาร์ -->
+  <div id="hotbar-wrap">
+    <div id="tooltip" class="tooltip"></div>
+    <button id="btn-auto" class="auto-btn" title="เปิด/ปิดโหมดเล่นอัตโนมัติ (Tab)">
+      <span class="ab-icon">🤖</span>
+      <span class="ab-main"><b>AUTO</b><em id="auto-status">ปิดอยู่</em></span>
+      <span class="ab-key">Tab</span>
+    </button>
+    <button id="btn-autoquest" class="auto-btn" title="ออโต้เควสต์ — รับเควสต์ บายมอน กลับส่งเอง (U)">
+      <span class="ab-icon">🧾</span>
+      <span class="ab-main"><b>ออโต้เควสต์</b><em id="autoquest-status">ปิดอยู่</em></span>
+      <span class="ab-key">U</span>
+    </button>
+    <div id="hotbar"></div>
+    <div id="side-buttons">
+      <button class="sbtn" data-panel="inv"      title="กระเป๋า (I)">🎒<em>I</em></button>
+      <button class="sbtn" data-panel="skill"    title="สกิล (K)">✨<em>K</em></button>
+      <button class="sbtn" data-panel="gacha"    title="กาชา (G)">🎰<em>G</em></button>
+      <button class="sbtn" data-panel="quest"    title="เควสต์ (Q)">📜<em>Q</em></button>
+      <button class="sbtn" data-panel="pet"      title="สัตว์เลี้ยง (P)">🐾<em>P</em></button>
+      <button class="sbtn" data-panel="ach"      title="ความสำเร็จ (J)">🏆<em>J</em></button>
+      <button class="sbtn" data-panel="stats"    title="สถิติ (C)">📊<em>C</em></button>
+      <button class="sbtn" data-panel="settings" title="ตั้งค่า (O)">⚙️<em>O</em></button>
+      <button class="sbtn" data-panel="help"     title="ช่วยเหลือ (H)">❔<em>H</em></button>
+      <button class="sbtn" id="btn-save"         title="เซฟ (F5)">💾<em>F5</em></button>
+    </div>
+  </div>
+
+  <!-- ป๊อปอัปเล็ก -->
+  <div id="toasts"></div>
+  <div id="loot-feed"></div>
+
+  <!-- แพเนล -->
+  <div id="panels">
+    <div class="panel" id="panel-inv">
+      <header><h3>กระเป๋า</h3><button class="x" data-close>×</button></header>
+      <div class="panel-body">
+        <div id="inv-grid" class="inv-grid"></div>
+        <div id="inv-detail" class="inv-detail muted">เลือกไอเทมเพื่อดูรายละเอียด</div>
+      </div>
+      <footer><span id="inv-cap" class="muted small"></span></footer>
+    </div>
+
+    <div class="panel" id="panel-skill">
+      <header><h3>สกิล</h3><button class="x" data-close>×</button></header>
+      <div class="panel-body"><div id="skill-list"></div></div>
+    </div>
+
+    <div class="panel" id="panel-gacha">
+      <header><h3>กาชา</h3><button class="x" data-close>×</button></header>
+      <div class="panel-body">
+        <div id="gacha-banner" class="gacha-banner"></div>
+        <div id="gacha-rates" class="gacha-rates"></div>
+        <div id="gacha-actions" class="gacha-actions"></div>
+        <div id="gacha-result" class="gacha-result"><span class="muted small">ผลการเปิดกาชาจะแสดงที่นี่</span></div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-quest">
+      <header><h3>เควสต์</h3><button class="x" data-close>×</button></header>
+      <div class="panel-body"><div id="quest-full"></div></div>
+    </div>
+
+    <div class="panel" id="panel-pet">
+      <header><h3>สัตว์เลี้ยง</h3><button class="x" data-close>×</button></header>
+      <div class="panel-body"><div id="pet-list"></div></div>
+      <footer><span id="pet-cap" class="muted small"></span></footer>
+    </div>
+
+    <div class="panel" id="panel-ach">
+      <header><h3>ความสำเร็จ</h3><button class="x" data-close>×</button></header>
+      <div class="panel-body">
+        <div id="ach-summary" class="ach-summary"></div>
+        <div id="ach-list"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-stats">
+      <header><h3>สถิติตัวละคร</h3><button class="x" data-close>×</button></header>
+      <div class="panel-body"><div id="stats-body"></div></div>
+    </div>
+
+    <div class="panel" id="panel-settings">
+      <header><h3>ตั้งค่า</h3><button class="x" data-close>×</button></header>
+      <div class="panel-body"><div id="settings-list"></div></div>
+      <footer><button class="btn btn-mini btn-ghost" id="btn-reset-settings">คืนค่าเริ่มต้น</button></footer>
+    </div>
+
+    <div class="panel" id="panel-help">
+      <header><h3>ช่วยเหลือ</h3><button class="x" data-close>×</button></header>
+      <div class="panel-body">
+        <table class="keys">
+          <tr><td>คลิกซ้ายที่พื้น</td><td>เดินไปจุดนั้น (หาทางอัตโนมัติ)</td></tr>
+          <tr><td>คลิกซ้ายที่มอน</td><td>เดินเข้าไปแล้วตีอัตโนมัติ</td></tr>
+          <tr><td>กดค้าง + ลาก</td><td>เดินต่อเนื่องตามเมาส์</td></tr>
+          <tr><td>คลิกขวา</td><td>ยกเลิกเป้าหมาย/เส้นทาง</td></tr>
+          <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / ลูกศร</td><td>เดินเอง (ใช้คู่กับเมาส์ได้)</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>โจมตีมอนใกล้สุด</td></tr>
+          <tr><td><kbd>1</kbd>–<kbd>6</kbd></td><td>สกิล · ยา HP · ยา MP · <b>ลูกแก้วจับมอน</b> · <b>ยาฟื้นสัตว์เลี้ยง</b></td></tr>
+          <tr><td><kbd>Tab</kbd></td><td><b>เปิด/ปิดโหมด AUTO</b> (เกมเล่นให้เอง) — กดปุ่มเดินเองจะปิดให้อัตโนมัติ</td></tr>
+          <tr><td><kbd>U</kbd></td><td><b>เปิด/ปิดออโต้เควสต์</b> — รับเควสต์ ฆ่ามอนตามเป้า เก็บของ กลับส่งให้เอง</td></tr>
+          <tr><td><kbd>E</kbd></td><td>เปิดหีบสมบัติ / คุย NPC ที่อยู่ใกล้</td></tr>
+          <tr><td><kbd>I</kbd> <kbd>K</kbd> <kbd>G</kbd> <kbd>Q</kbd> <kbd>P</kbd> <kbd>J</kbd> <kbd>C</kbd> <kbd>O</kbd></td><td>กระเป๋า · สกิล · กาชา · เควสต์ · <b>สัตว์เลี้ยง</b> · ความสำเร็จ · สถิติ · ตั้งค่า</td></tr>
+          <tr><td><kbd>F5</kbd></td><td>เซฟเกม</td></tr>
+          <tr><td><kbd>F3</kbd></td><td>เปิด/ปิดตัววัดประสิทธิภาพ</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>ปิดแพเนล / เมนูหยุดชั่วคราว</td></tr>
+        </table>
+        <p class="small muted"><b>โหมด AUTO:</b> กด <kbd>Tab</kbd> หรือคลิกปุ่ม 🤖 — ตัวละครจะหาเป้า เดินเข้าหา ตี
+          ใช้สกิล และกินยาให้เอง ปรับความดุดัน/ระยะหาเป้าได้ที่ตั้งค่า (O)</p>
+        <p class="small muted"><b>การจับสัตว์เลี้ยง:</b> ตีมอนให้เลือดเหลือน้อย → คลิกที่มอน → กด <kbd>5</kbd> โยนลูกแก้ว
+          เลือดยิ่งน้อยยิ่งจับง่าย และมอน <b>elite</b> ให้สัตว์เลี้ยงระดับสูงกว่า ลูกแก้วหาได้จากมอน กับร้านค้า</p>
+        <p class="small muted"><b>เคล็ดลับ:</b> มอนสีทอง/ม่วงคือ <b>มอนระดับ elite</b> — เลือดเยอะกว่า แต่ของดรอปดีกว่ามาก</p>
+        <p class="small muted"><b>เคล็ดลับ:</b> บอสโลกจะขึ้นวงแดงก่อนฟาด — ถอยออกจากวงแล้วคุณจะ "หลบทัน"</p>
+        <p class="small muted"><b>หีบสมบัติ:</b> มี 7 หีบกระจายอยู่ทั่วแผนที่ จุดทองในมินิแมปคือหีบที่ยังไม่เปิด</p>
+        <p class="small muted">เกร็ด: มอนทุกตัวมีเลือด แต่มอนบางตัวไม่มีความคิด อย่าตกใจ</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="dialog" class="dialog hidden">
+    <div class="dlg-face"><canvas id="dlg-canvas" width="48" height="48"></canvas></div>
+    <div class="dlg-main">
+      <div class="dlg-name" id="dlg-name">NPC</div>
+      <p id="dlg-text">...</p>
+      <div class="dlg-actions" id="dlg-actions"></div>
+    </div>
+  </div>
+
+  <!-- เลือกอาชีพขั้นสูง (Lv.10) — เลือกครั้งเดียวยืนยันถาวร -->
+  <div id="advance" class="dialog advance hidden">
+    <div class="adv-head">
+      <h2 id="adv-title">เลือกอาชีพขั้นสูง</h2>
+      <p class="muted small">ถึงเลเวล 10 แล้ว — เลือกได้ครั้งเดียว ย้อนกลับไม่ได้</p>
+    </div>
+    <div class="adv-grid" id="adv-grid"></div>
+  </div>
+
+  <div id="pause" class="pause hidden">
+    <div class="pause-box">
+      <h2>หยุดชั่วคราว</h2>
+      <p class="muted small">เซิร์ฟเวอร์ยังเดินอยู่ แต่คุณไม่</p>
+      <div class="pause-btns">
+        <button class="btn btn-primary" id="btn-resume">เล่นต่อ (Esc)</button>
+        <button class="btn" data-panel="settings">ตั้งค่า</button>
+        <button class="btn" data-panel="ach">ความสำเร็จ</button>
+        <button class="btn btn-ghost" id="btn-quit">เซฟแล้วกลับหน้าแรก</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="death" class="death hidden">
+    <div class="death-box">
+      <h2>คุณถึงแก่กรรม</h2>
+      <p id="death-by" class="muted"></p>
+      <p class="small" id="death-quote"></p>
+      <button class="btn btn-primary" id="btn-respawn">ฟื้นที่หมู่บ้าน (มีบทลงโทษ)</button>
+    </div>
+  </div>
+
+  <div id="fatal" class="fatal hidden">
+    <div class="fatal-box">
+      <h2>เกมสะดุด</h2>
+      <p class="muted small">ระบบตรวจพบข้อผิดพลาดซ้ำ ๆ จึงหยุดลูปไว้ชั่วคราว เพื่อไม่ให้หน้าจอค้างเงียบ ๆ</p>
+      <pre id="fatal-msg"></pre>
+      <button class="btn btn-primary" id="btn-fatal-retry">ลองเล่นต่อ</button>
+    </div>
+  </div>
+
+</section>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

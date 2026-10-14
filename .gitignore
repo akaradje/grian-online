@@ -1,0 +1,14 @@
+# agent internals / personal memory — ห้ามเผยแพร่สาธารณะ
+.workbuddy-ai/
+.workbuddy/
+.pw/
+.wbapp_*.genie
+game/
+
+# dev artifacts (screenshots ระหว่างพัฒนา — ขึ้น repo ไม่ได้ประโยชน์ แพง too)
+shots/
+
+# OS junk
+Thumbs.db
+.DS_Store
+desktop.ini
