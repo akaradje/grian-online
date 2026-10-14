@@ -59,6 +59,9 @@ const NO_BILLBOARD = new Set([
   T.CYBERFLOOR, T.DATASTREAM, T.GLITCH,
   T.WALL, T.ROOF, T.DOOR, T.ROOFTOP, T.WALLWIN, T.CAVE,
   T.CHEST, T.PORTAL,
+  T.TREE, T.HELLTREE, T.CYBERTREE,
+  T.ROCK, T.HELLROCK, T.CYBERROCK,
+  T.LAMP, T.WELL, T.STATUE,
 ]);
 
 // ไทล์สิ่งปลูกสร้าง/พร็อพที่ต้องการให้พื้นด้านล่างเป็นไทล์พื้นสะอาด (ไม่วาดสไปรต์พร็อพทับลงบนแคนวาสพื้น 3D)
@@ -138,11 +141,17 @@ function bakeCleanGround3D(world) {
     if (world.hell) {
       return world.inVillage(x * TS, y * TS) ? T.STONEPATH : T.ASH;
     }
+    const neighbors = [
+      world.get(x - 1, y), world.get(x + 1, y),
+      world.get(x, y - 1), world.get(x, y + 1),
+    ];
+    if (neighbors.includes(T.STONEPATH)) return T.STONEPATH;
+    if (neighbors.includes(T.PATH)) return T.PATH;
     if (world.inVillage(x * TS, y * TS)) {
-      if (t === T.WALL || t === T.WALLWIN || t === T.DOOR || t === T.ROOF || t === T.ROOFTOP || t === T.WELL || t === T.LAMP || t === T.STATUE) {
-        return T.STONEPATH;
-      }
+      if (t === T.FENCE) return T.DIRT;
+      return T.STONEPATH;
     }
+    if (neighbors.includes(T.DIRT)) return T.DIRT;
     return T.GRASS;
   };
 
@@ -447,26 +456,26 @@ export const GFX3D = {
         const wz = y * TS + TS / 2;
         const h = this.sampleH(wx, wz);
 
-        // เติมหลังคา 3D คลุมพื้นที่ตรงกลางบ้านในหมู่บ้านให้เต็มหลัง (โดยไม่แก้ world.tiles เพื่อให้ A* เหมือนเดิม)
-        if (t === T.DIRT && (world.get(x, y - 1) === T.ROOF || world.get(x, y - 2) === T.ROOF || world.get(x, y - 3) === T.ROOF)) {
+        // เติมหลังคา 3D คลุมพื้นที่ด้านในตัวบ้าน (ทั้ง T.DIRT และ T.WALLWIN ที่อยู่ใต้แนวหลังคา T.ROOF 1-3 ช่อง)
+        if ((t === T.DIRT || t === T.WALLWIN) && (world.get(x, y - 1) === T.ROOF || world.get(x, y - 2) === T.ROOF || world.get(x, y - 3) === T.ROOF)) {
           m4.compose(pos.set(wx, h + 8.5, wz), quat, scl.set(1, 1, 1));
           wallMats.push(m4.clone());
-          m4.compose(pos.set(wx, h + 21.5, wz), quat, scl.set(1, 1, 1));
+          m4.compose(pos.set(wx, h + 21.8, wz), quat, scl.set(1, 1, 1));
           roofTopMats.push(m4.clone());
           continue;
         }
         if (t === T.WALL || t === T.WALLWIN || t === T.DOOR) {
           m4.compose(pos.set(wx, h + 8.5, wz), quat, scl.set(1, 1, 1));
           wallMats.push(m4.clone());
-          // วางหลังคาคลุมเหนือผนังบ้านด้วยเพื่อให้บ้านดูเป็นหลังคาเต็มหลัง
-          m4.compose(pos.set(wx, h + 19.0, wz), quat, scl.set(1, 1, 1));
+          m4.compose(pos.set(wx, h + 19.2, wz), quat, scl.set(1, 1, 1));
           roofMats.push(m4.clone());
-          if (t === T.WALLWIN) {
-            m4.compose(pos.set(wx, h + 9.0, wz + 8.2), quat, scl.set(1, 1, 1));
-            winMats.push(m4.clone());
-          } else if (t === T.DOOR) {
+          if (t === T.DOOR) {
             m4.compose(pos.set(wx, h + 6.5, wz + 8.2), quat, scl.set(1, 1, 1));
             doorMats.push(m4.clone());
+            m4.compose(pos.set(wx - 24, h + 9.5, wz + 8.2), quat, scl.set(1, 1, 1));
+            winMats.push(m4.clone());
+            m4.compose(pos.set(wx + 24, h + 9.5, wz + 8.2), quat, scl.set(1, 1, 1));
+            winMats.push(m4.clone());
           }
         } else if (t === T.ROOF) {
           m4.compose(pos.set(wx, h + 8.5, wz), quat, scl.set(1, 1, 1));
@@ -476,7 +485,7 @@ export const GFX3D = {
         } else if (t === T.ROOFTOP) {
           m4.compose(pos.set(wx, h + 8.5, wz), quat, scl.set(1, 1, 1));
           wallMats.push(m4.clone());
-          m4.compose(pos.set(wx, h + 22.5, wz), quat, scl.set(1, 1, 1));
+          m4.compose(pos.set(wx, h + 22.2, wz), quat, scl.set(1, 1, 1));
           roofTopMats.push(m4.clone());
         } else if (t === T.TREE && x >= 2 && y >= 2 && x < world.w - 2 && y < world.h - 2) {
           const sc = 0.88 + (tileHash(x, y) % 5) * 0.07;
@@ -510,6 +519,8 @@ export const GFX3D = {
         } else if (t === T.WELL) {
           m4.compose(pos.set(wx, h + 4.5, wz), quat, scl.set(1, 1, 1));
           wellBaseMats.push(m4.clone());
+          m4.compose(pos.set(wx, h + 14.5, wz), quat, scl.set(0.85, 0.85, 0.85));
+          roofMats.push(m4.clone());
         } else if (t === T.STATUE) {
           m4.compose(pos.set(wx, h + 8.0, wz), quat, scl.set(1, 1, 1));
           statueMats.push(m4.clone());
@@ -974,7 +985,7 @@ export const GFX3D = {
       if (!mesh) continue;
       const sp = SPR[ent.sprId] || SPR['dummy'];
       const h = this.heightAt(ent.x, ent.y);
-      mesh.position.set(ent.x, h + (ent.headUp || 0) + sp.h * 0.6 - 0.8, ent.y);
+      mesh.position.set(ent.x, h + (ent.headUp || 0) + sp.h * 0.6 - 0.8, ent.y + 4.2);
       mesh.quaternion.copy(camQ);
       mesh.scale.x = 1; // ใช้ pre-flipped texture แทน scale.x = -1 เพื่อรักษา FrontSide
 

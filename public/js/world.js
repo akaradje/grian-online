@@ -586,17 +586,17 @@ export class World {
     this.house(vx + 3, vy + 12);
     this.house(vx + 16, vy + 12);
 
-    for (const [dx, dy] of [[9, 7], [9, 11], [17, 7], [17, 11]]) this.set(vx + dx, vy + dy, T.BARREL);
+    for (const [dx, dy] of [[10, 9], [9, 11], [16, 9], [17, 11]]) this.set(vx + dx, vy + dy, T.BARREL);
     for (const [dx, dy] of [[11, 6], [15, 6], [11, 12], [15, 12]]) this.set(vx + dx, vy + dy, T.LAMP);
     this.set(vx + 12, vy + 3, T.STATUE);
 
     this.npcSpots = [
-      { id: 'elder', x: (vx + 13) * CONFIG.TILE, y: (vy + 6) * CONFIG.TILE },
-      { id: 'merchant', x: (vx + 7) * CONFIG.TILE, y: (vy + 9) * CONFIG.TILE },
-      { id: 'gm', x: (vx + 19) * CONFIG.TILE, y: (vy + 9) * CONFIG.TILE },
+      { id: 'elder', x: (vx + 13) * CONFIG.TILE, y: (vy + 6.5) * CONFIG.TILE },
+      { id: 'merchant', x: (vx + 7) * CONFIG.TILE, y: (vy + 10) * CONFIG.TILE },
+      { id: 'gm', x: (vx + 19) * CONFIG.TILE, y: (vy + 10) * CONFIG.TILE },
       { id: 'guildmaster', x: (vx + 13) * CONFIG.TILE, y: (vy + 15) * CONFIG.TILE },
-      { id: 'wizard', x: (vx + 3) * CONFIG.TILE, y: (vy + 15) * CONFIG.TILE },
-      { id: 'afk_guy', x: (vx + 22) * CONFIG.TILE, y: (vy + 3) * CONFIG.TILE },
+      { id: 'wizard', x: (vx + 11.5) * CONFIG.TILE, y: (vy + 14) * CONFIG.TILE },
+      { id: 'afk_guy', x: (vx + 15) * CONFIG.TILE, y: (vy + 10) * CONFIG.TILE },
     ];
 
     this.spawn = { x: (vx + 13) * CONFIG.TILE, y: (vy + 10) * CONFIG.TILE };
@@ -769,6 +769,19 @@ export class World {
       if (region && this.regionAt(px, py) !== region) continue;
       if (awayFrom && Math.hypot(px - awayFrom.x, py - awayFrom.y) < minDist) continue;
       return { x: px, y: py };
+    }
+    // fallback: สแกนตารางหาจุดที่ใช้ได้จริง (เดิมคืน this.spawn ซึ่งอยู่ในหมู่บ้าน —
+    // ทำให้มอนเกิดกลางหมู่บ้านเมื่อ region+outsideVillage หาไม่เจอใน tries ที่สุ่ม)
+    for (let y = 3; y < this.h - 3; y += 2) {
+      for (let x = 3; x < this.w - 3; x += 2) {
+        if (this.isSolidTile(this.get(x, y))) continue;
+        const px = x * CONFIG.TILE + CONFIG.TILE / 2;
+        const py = y * CONFIG.TILE + CONFIG.TILE / 2;
+        if (outsideVillage && this.inVillage(px, py)) continue;
+        if (region && this.regionAt(px, py) !== region) continue;
+        if (awayFrom && Math.hypot(px - awayFrom.x, py - awayFrom.y) < minDist) continue;
+        return { x: px, y: py };
+      }
     }
     return { ...this.spawn };
   }

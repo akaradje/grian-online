@@ -233,7 +233,7 @@ export function tickSpawn(state, dt) {
 
   const spot = (region === 'graveyard' || region === 'cave' || region === 'tallgrass'
     || region === 'hellfield' || region === 'hellcore' || region === 'cyberfield' || region === 'cybercore')
-    ? state.world.randomSpot(Math.random, { region, awayFrom: p, minDist: 120 })
+    ? state.world.randomSpot(Math.random, { region, awayFrom: p, minDist: 120, outsideVillage: true })
     : undefined;
   spawnMonster(state, pick, spot);
 }
@@ -249,7 +249,7 @@ export function initialMonsters(state) {
     ];
     for (const [id, region, n] of zones) {
       for (let i = 0; i < n; i++) {
-        const spot = w.randomSpot(Math.random, { region, tries: 140 });
+        const spot = w.randomSpot(Math.random, { region, tries: 140, outsideVillage: true });
         spawnMonster(state, id, spot);
       }
     }
@@ -262,7 +262,7 @@ export function initialMonsters(state) {
     ];
     for (const [id, region, n] of zones) {
       for (let i = 0; i < n; i++) {
-        const spot = w.randomSpot(Math.random, { region, tries: 140 });
+        const spot = w.randomSpot(Math.random, { region, tries: 140, outsideVillage: true });
         spawnMonster(state, id, spot);
       }
     }
@@ -278,14 +278,14 @@ export function initialMonsters(state) {
     ];
     for (const [id, region, n] of zones) {
       for (let i = 0; i < n; i++) {
-        const spot = w.randomSpot(Math.random, { region, tries: 140 });
+        const spot = w.randomSpot(Math.random, { region, tries: 140, outsideVillage: true });
         spawnMonster(state, id, spot);
       }
     }
   }
   for (const c of w.chests) {
     if (Math.random() < 0.6) {
-      const spot = w.randomSpot(Math.random, { awayFrom: { x: c.x, y: c.y }, minDist: 40, tries: 60 });
+      const spot = w.randomSpot(Math.random, { awayFrom: { x: c.x, y: c.y }, minDist: 40, tries: 60, outsideVillage: true });
       const guardPool = w.cyber ? ['botmon', 'glitchbug'] : (w.hell ? ['imp', 'skull'] : ['taxman', 'dummy', 'rat']);
       spawnMonster(state, rand(guardPool), spot, true);
     }

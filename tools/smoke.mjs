@@ -301,7 +301,7 @@ const clickTarget = await page.evaluate(async (isolateSrc) => {
   const targeted = S.targetMonster === m;
   const boxShown = !document.getElementById('target-box').classList.contains('hidden');
   const hp0 = m.hp;
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 120; i++) {          // 12 วิ — เผื่อมอนเดินหนีระหว่างที่ผู้เล่นเดินเข้าไปตี
     await new Promise((res) => setTimeout(res, 100));
     if (m.dead || m.hp < hp0) break;
   }
@@ -525,10 +525,13 @@ const vfxTest = await page.evaluate(async () => {
   const results = [];
   for (const id of p.cls.skills) {
     p.cooldowns[id] = 0; p.mp = p.maxMp; p.hp = p.maxHp;
-    const before = G.VFX.count();
+    // นับเอฟเฟกต์ใหม่ด้วย identity ของออบเจกต์ — เอฟเฟกต์เก่าที่หมดอายุระหว่างรอ
+    // ไม่ทำให้ผลต่างเป็น 0 (เดิมนับ VFX.count() delta แล้วแฟลกได้)
+    const beforeSet = new Set(G.VFX.list);
     G.handlers.onSkill(id);
     await new Promise((r) => setTimeout(r, 90));
-    results.push({ id, spawned: G.VFX.count() - before });
+    const spawned = G.VFX.list.filter((e) => !beforeSet.has(e)).length;
+    results.push({ id, spawned });
     await new Promise((r) => setTimeout(r, 350));
   }
   return {
@@ -1413,6 +1416,24 @@ const v2Test = await page.evaluate(async () => {
 if (v2Test.fullSet && v2Test.setBoosted && v2Test.netConnected && v2Test.wsModeOk && v2Test.sseModeOk && v2Test.onlineCount >= 2 && v2Test.sameMapPeers >= 1 && v2Test.archMeshes >= 3) {
   ok(`ระบบออนไลน์ v2.0.0 ทำงานครบ: Multiplayer WS+SSE Fallback (${v2Test.onlineCount} คนในเซิร์ฟ) · โบนัสเซ็ตอุปกรณ์ 3 ชิ้น · 3D Architecture (${v2Test.archMeshes} กลุ่มโมเดล)`);
 } else bad('ระบบ v2.0.0 ไม่ครบ', JSON.stringify(v2Test));
+
+/* ── 24c. ตรวจไฟล์ Deploy (render.yaml / Dockerfile / package.json / net.js) ── */
+{
+  const rootDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const ry = fs.readFileSync(path.join(rootDir, "render.yaml"), "utf8");
+  const df = fs.readFileSync(path.join(rootDir, "Dockerfile"), "utf8");
+  const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, "package.json"), "utf8"));
+  const hasNet = fs.existsSync(path.join(rootDir, "public", "js", "net.js"));
+  const ryOk = /^\s*runtime:\s*node\b/m.test(ry) && !/^\s*env:\s*node\b/m.test(ry)
+    && /healthCheckPath:\s*\/api\/health/.test(ry) && /startCommand:\s*"?node serve\.mjs"?/.test(ry);
+  const dfOk = /FROM\s+node:/i.test(df) && /EXPOSE\s+8731/.test(df) && /serve\.mjs/.test(df);
+  const pkgOk = pkg.main === "serve.mjs" && pkg.scripts?.start === "node serve.mjs";
+  if (ryOk && dfOk && pkgOk && hasNet) {
+    ok("ไฟล์ Deploy ถูกต้องครบ: render.yaml (runtime: node + /api/health) · Dockerfile · package.json · net.js");
+  } else {
+    bad("ไฟล์ Deploy ไม่ถูกต้อง", JSON.stringify({ ryOk, dfOk, pkgOk, hasNet }));
+  }
+}
 
 /* ── 25. ปล่อยรันต่อเพื่อจับ error ที่หลุด ── */
 await page.keyboard.down('a');

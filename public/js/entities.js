@@ -868,7 +868,8 @@ export function updateMonsters(state, dt) {
 
     const d = Math.hypot(p.x - m.x, p.y - m.y);
     const aggro = m.def.aggro || 0;
-    const adminPassive = p.clsId === 'admin' && !m.engaged;
+    const inSafeVillage = !m.towerWave && !m.engaged && state.world.inVillage(p.x, p.y);
+    const adminPassive = (p.clsId === 'admin' && !m.engaged) || inSafeVillage;
 
     if (m.boss && updateBossAbility(state, m, dt, d)) continue;
 
@@ -1055,8 +1056,10 @@ function moveMonster(state, m, dx, dy, dt) {
   const nx = m.x + (dx / len) * sp;
   const ny = m.y + (dy / len) * sp;
   const stuckInSolid = state.world.solidAtPx(m.x, m.y);
-  if (stuckInSolid || !state.world.solidAtPx(nx, m.y)) m.x = nx;
-  if (stuckInSolid || !state.world.solidAtPx(m.x, ny)) m.y = ny;
+  const blockVilX = !m.towerWave && !m.engaged && !state.world.inVillage(m.x, m.y) && state.world.inVillage(nx, m.y);
+  const blockVilY = !m.towerWave && !m.engaged && !state.world.inVillage(m.x, m.y) && state.world.inVillage(m.x, ny);
+  if ((stuckInSolid || !state.world.solidAtPx(nx, m.y)) && !blockVilX) m.x = nx;
+  if ((stuckInSolid || !state.world.solidAtPx(m.x, ny)) && !blockVilY) m.y = ny;
   if (dx !== 0) m.dir = Math.sign(dx);
 }
 

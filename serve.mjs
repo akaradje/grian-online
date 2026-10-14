@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════
-   serve.mjs — เซิร์ฟเวอร์เกม เกรียนออนไลน์ v2.0.2 (All-in-One: Static + Real-Time Multiplayer)
+   serve.mjs — เซิร์ฟเวอร์เกม เกรียนออนไลน์ v2.0.3 (All-in-One: Static + Real-Time Multiplayer)
    ใช้:  node serve.mjs [พอร์ต]
    แล้วเปิด http://127.0.0.1:8731
 
@@ -241,7 +241,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({
       ok: true,
-      version: '2.0.2',
+      version: '2.0.3',
       onlinePlayers: list.length,
       peers: list,
       recentChats: recentChats.slice(-15),
@@ -345,5 +345,5 @@ server.on('upgrade', (req, socket) => {
 
 server.listen(PORT, HOST, () => {
   const shown = HOST === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1';
-  console.log(`เกรียนออนไลน์ v2.0.2 (Online Multiplayer Ready) พร้อมเล่นที่ http://${shown}:${PORT}`);
+  console.log(`เกรียนออนไลน์ v2.0.3 (Online Multiplayer Ready) พร้อมเล่นที่ http://${shown}:${PORT}`);
 });

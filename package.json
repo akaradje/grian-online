@@ -1,7 +1,7 @@
 {
   "name": "grian-online",
-  "version": "2.0.2",
-  "description": "เกรียนออนไลน์ v2.0.2 — 3D Pixel-Art MMORPG Satire with Real-Time WebSocket/SSE Multiplayer Server",
+  "version": "2.0.3",
+  "description": "เกรียนออนไลน์ v2.0.3 — 3D Pixel-Art MMORPG Satire with Real-Time WebSocket/SSE Multiplayer Server",
   "type": "module",
   "main": "serve.mjs",
   "scripts": {
