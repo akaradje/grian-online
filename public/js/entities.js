@@ -547,6 +547,7 @@ export function playerAttack(state, power = 1, tag = '', forcedTarget = null) {
   const target = m || botTarget;
 
   p.dir = target ? Math.sign(target.x - p.x) || p.dir : p.dir;
+  p.swingT = 0.28; p.swingDur = 0.28;
   VFX.spawn('arc', { x: p.x + p.dir * 14, y: p.y - 8, color: '#ffffff', size: 17, dur: 0.22 });
   Audio.play('swing');
   if (!target) return null;
@@ -607,6 +608,8 @@ export function useSkill(state, skillId) {
   Audio.play(sk.type === 'banish' ? 'ban' : 'skill');
   const nearTarget = nearestMonster(state, p.x, p.y, ATTACK_RANGE + 26)
     || nearestHostileBot(state, p.x, p.y, ATTACK_RANGE + 26);
+  if (nearTarget) p.dir = Math.sign(nearTarget.x - p.x) || p.dir;
+  p.swingT = 0.34; p.swingDur = 0.34;
   spawnSkillFx(skillId, {
     caster: p,
     target: nearTarget,
@@ -1065,9 +1068,13 @@ function moveMonster(state, m, dx, dy, dt) {
 
 /* ── อัปเดต NPC ── */
 export function updateNpcs(state, dt) {
+  const p = state.player;
   for (const n of state.npcs) {
     n.animT += dt;
     if (n.animT > 0.5) { n.animT = 0; n.frame ^= 1; }
+    if (p && Math.hypot(p.x - n.x, p.y - n.y) < 110 && Math.abs(p.x - n.x) > 4) {
+      n.dir = p.x < n.x ? -1 : 1;
+    }
   }
 }
 
@@ -1079,6 +1086,7 @@ export function updateBots(state, dt) {
     b.prevX = b.x; b.prevY = b.y;
     b.animT += dt;
     if (b.hitFlash > 0) b.hitFlash = Math.max(0, b.hitFlash - dt);
+    if (b.swingT > 0) b.swingT = Math.max(0, b.swingT - dt);
     if (b.animT > 0.2) { b.animT = 0; b.frame ^= 1; }
     b.chatT -= dt;
 
@@ -1115,7 +1123,7 @@ export function updateBots(state, dt) {
           if (!w.solidAtPx(b.x, b.y + dy * sp)) b.y += dy * sp;
           b.dir = Math.sign(dx) || b.dir;
         } else if (b.atkCd <= 0) {
-          b.atkCd = 0.85;
+          b.atkCd = 0.85; b.swingT = 0.26; b.swingDur = 0.26; b.dir = Math.sign(tgt.x - b.x) || b.dir;
           const partyAtk = Math.max(4, Math.round(p.atk * 0.45));
           hitMonster(state, tgt, partyAtk, 2, 1);
           addEffect(state, 'slash', b.x + (b.dir || 1) * 12, b.y - 6, 0.16, { dir: b.dir });
@@ -1244,6 +1252,7 @@ export function updatePlayer(state, dt, input) {
     if (p.cooldowns[k] > 0) p.cooldowns[k] = Math.max(0, p.cooldowns[k] - dt);
   }
   if (p.attackCd > 0) p.attackCd -= dt;
+  if (p.swingT > 0) p.swingT = Math.max(0, p.swingT - dt);
 
   const bl = p.buffs;
   for (let i = 0; i < bl.length; i++) bl[i].t -= dt;
@@ -1293,3 +1302,14 @@ export function updatePlayer(state, dt, input) {
 
 export function playerSpriteId(p) { return 'hero_' + p.clsId; }
 export function classById(id) { return CLASSES.find((c) => c.id === id); }
+
+/** คืนชื่อสไปรต์อาวุธสำหรับวาดแอนิเมชันเหวี่ยงดาบ (v2.1.0) */
+export function weaponSpriteFor(ent) {
+  if (!ent) return 'wpn_sword';
+  const wid = ent.equip?.weapon?.id || '';
+  if (wid === 'sword_cyber' || ent.clsId === 'cafe') return 'wpn_cyber';
+  if (wid === 'sword_hell' || ent.clsId === 'troll') return 'wpn_hell';
+  if (wid === 'sword_gold' || wid === 'sword_copy9' || ent.clsId === 'fivestar' || (ent.auraLvl >= 7)) return 'wpn_gold';
+  if (ent.clsId === 'debt' || ent.clsId === 'admin') return 'wpn_staff';
+  return 'wpn_sword';
+}

@@ -196,7 +196,7 @@ export const Net = {
     if (msg.type === 'action' && msg.peerId && msg.peerId !== this.peerId) {
       const peer = this.peers.get(msg.peerId);
       if (peer && this.state && peer.mapId === this.state.mapId) {
-        peer.hitFlash = 0.18;
+        peer.hitFlash = 0.18; peer.swingT = 0.28; peer.swingDur = 0.28;
         Particles.spawn('slash', (peer.renderX ?? peer.x) + (peer.dir || 1) * 12, (peer.renderY ?? peer.y) - 6, { dir: peer.dir || 1 });
       }
     }
@@ -327,6 +327,7 @@ export const Net = {
         peer.renderY += (ty - peer.renderY) * k;
       }
       if (peer.hitFlash > 0) peer.hitFlash = Math.max(0, peer.hitFlash - dt);
+      if (peer.swingT > 0) peer.swingT = Math.max(0, peer.swingT - dt);
     }
 
     if (state.screen !== 'play' || !state.player) return;

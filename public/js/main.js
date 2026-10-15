@@ -15,7 +15,7 @@ import {
   updatePlayer, updateMonsters, updateNpcs, updateBots, updateDrops, updateEffects,
   playerAttack, useSkill, checkLevelUp, applyDeathPenalty, upgradeEquipped, killMonster,
   addFloater, nearestMonster, ATTACK_RANGE, advanceClass,
-  craftProtectCharm, togglePartyBot, applyGuildBuff, startTowerFloor, playerAura, hasFullSet, hitBot,
+  craftProtectCharm, togglePartyBot, applyGuildBuff, startTowerFloor, playerAura, hasFullSet, hitBot, weaponSpriteFor,
 } from './entities.js';
 import {
   updatePets, attemptCapture, finishCapture,
@@ -254,20 +254,24 @@ function render(alpha, frameDt) {
     GFX3D.flash = 0;
     for (const f of VFX.flashes) GFX3D.flash = Math.max(GFX3D.flash, f.a0 * (1 - f.t / f.dur));
     const list = [];
-    for (const n of state.npcs) list.push({ sprId: n.sprite, x: n.x, y: n.y, frame: n.frame });
+    for (const n of state.npcs) list.push({ sprId: n.sprite, x: n.x, y: n.y, frame: n.frame, flip: (n.dir || -1) < 0 });
     for (const b of state.bots) {
       if (b.koT > 0) continue;
-      list.push({ sprId: 'hero_' + CLASSES[(b._c || 0) % CLASSES.length].id, x: b.x, y: b.y, frame: b.frame, flip: b.dir < 0 });
+      const bClsId = CLASSES[(b._c || 0) % CLASSES.length].id;
+      const bSwing = b.swingT > 0 ? Math.max(0.01, 1 - b.swingT / (b.swingDur || 0.26)) : 0;
+      list.push({ sprId: 'hero_' + bClsId, x: b.x, y: b.y, frame: b.frame, flip: b.dir < 0, swing: bSwing, wpnId: weaponSpriteFor({ clsId: bClsId }) });
     }
     for (const peer of Net.sameMapPeers(state)) {
       const pAura = peer.auraLvl >= 10 ? '#ff4d6b' : (peer.auraLvl >= 9 ? '#ffc94d' : (peer.auraLvl >= 7 ? '#b98bff' : (peer.auraLvl >= 5 ? '#4aa8ff' : null)));
-      list.push({ sprId: 'hero_' + (peer.clsId || 'loot'), x: peer.renderX ?? peer.x, y: peer.renderY ?? peer.y, frame: peer.frame || 0, flip: peer.dir < 0, auraColor: pAura });
+      const peerSwing = peer.swingT > 0 ? Math.max(0.01, 1 - peer.swingT / (peer.swingDur || 0.28)) : 0;
+      list.push({ sprId: 'hero_' + (peer.clsId || 'loot'), x: peer.renderX ?? peer.x, y: peer.renderY ?? peer.y, frame: peer.frame || 0, flip: peer.dir < 0, auraColor: pAura, swing: peerSwing, wpnId: weaponSpriteFor(peer) });
     }
     for (const m of state.monsters) if (!m.dead) list.push({ sprId: m.def.sprite, x: m.x, y: m.y, frame: m.frame, flip: m.dir < 0, headUp: m.boss ? 8 : 0, shadowR: m.boss ? 26 : 0, auraColor: m.boss ? '#ff4d6b' : (m.elite ? m.elite.aura : null) });
     for (const pt of state.pets) list.push({ sprId: pt.speciesId, x: pt.x, y: pt.y, frame: pt.frame, flip: pt.dir < 0 });
     for (const d of state.drops) list.push({ sprId: d.id === 'gem' ? 'drop_gem' : 'drop_bag', x: d.x, y: d.y, frame: Math.floor(state.time * 3) % 2 });
     const myAura = playerAura(p);
-    list.push({ sprId: 'hero_' + p.clsId, x: px, y: py, frame: p.frame, flip: p.dir < 0, headUp: 0, auraColor: myAura ? myAura.color : null });
+    const mySwing = p.swingT > 0 ? Math.max(0.01, 1 - p.swingT / (p.swingDur || 0.28)) : 0;
+    list.push({ sprId: 'hero_' + p.clsId, x: px, y: py, frame: p.frame, flip: p.dir < 0, headUp: 0, auraColor: myAura ? myAura.color : null, swing: mySwing, wpnId: weaponSpriteFor(p) });
     const hadBench = GFX3D._benchPending;
     GFX3D.render(state, alpha, frameDt, list);
     if (hadBench) { lastTs = performance.now(); Perf.reset(); }
@@ -415,7 +419,8 @@ function render(alpha, frameDt) {
       else if (it.kind === 'peer') sprId = 'hero_' + (e.clsId || 'loot');
       else sprId = 'hero_' + CLASSES[(e._c || 0) % CLASSES.length].id;
       const spr = SPR[sprId] || SPR['dummy'];
-      const f = spr.frames[e.frame % spr.frames.length] || spr.frames[0];
+      const isSwinging = e.swingT > 0 && spr.frames.length >= 3;
+      const f = isSwinging ? spr.frames[2] : (spr.frames[(e.frame || 0) % 2] || spr.frames[0]);
       const w = spr.w, h = spr.h;
 
       if (it.kind === 'pet') {
@@ -448,14 +453,35 @@ function render(alpha, frameDt) {
         wg.restore();
       }
 
+      const swingProg = e.swingT > 0 ? (1 - e.swingT / (e.swingDur || 0.28)) : 0;
+      const lungeX = swingProg > 0 ? Math.round(Math.sin(swingProg * Math.PI) * 3 * (e.dir < 0 ? -1 : 1)) : 0;
       if (e.dir < 0) {
         wg.save();
-        wg.translate(sx(ex) + Math.round(w / 2), sy(ey));
+        wg.translate(sx(ex) + lungeX + Math.round(w / 2), sy(ey));
         wg.scale(-1, 1);
         wg.drawImage(f, -Math.round(w / 2), -h);
         wg.restore();
       } else {
-        wg.drawImage(f, sx(ex) - Math.round(w / 2), sy(ey) - h);
+        wg.drawImage(f, sx(ex) + lungeX - Math.round(w / 2), sy(ey) - h);
+      }
+      if (swingProg > 0) {
+        const wpnSpr = SPR[weaponSpriteFor(e)] || SPR['wpn_sword'];
+        if (wpnSpr && wpnSpr.frames[0]) {
+          const ease = 1 - (1 - swingProg) * (1 - swingProg);
+          const ang = -0.55 + ease * 2.75;
+          wg.save();
+          wg.translate(sx(ex) + lungeX + (e.dir < 0 ? -4 : 4), sy(ey) - 7);
+          if (e.dir < 0) wg.scale(-1, 1);
+          // วาดคลื่นแสงหน้าดาบ
+          wg.strokeStyle = weaponSpriteFor(e) === 'wpn_cyber' ? 'rgba(74,232,255,0.75)' : (weaponSpriteFor(e) === 'wpn_hell' ? 'rgba(255,77,107,0.75)' : 'rgba(255,230,130,0.75)');
+          wg.lineWidth = 2.2;
+          wg.beginPath();
+          wg.arc(0, 0, 12, ang - 1.4, ang - 0.3);
+          wg.stroke();
+          wg.rotate(ang);
+          wg.drawImage(wpnSpr.frames[0], -8, -13);
+          wg.restore();
+        }
       }
 
       if (e.hitFlash > 0) {
@@ -719,6 +745,7 @@ function orderMove(clientX, clientY) {
   const p = state.player;
   if (!p || p.dead || state.paused) return;
   const w = canvasToWorld(clientX, clientY);
+  if (Math.abs(w.x - p.x) > 2) p.dir = w.x < p.x ? -1 : 1;
   const m = monsterAt(w.x, w.y);
 
   if (m) {
@@ -1383,12 +1410,13 @@ const handlers = {
 };
 
 /* ───────────── อินพุตเมาส์ (คลิกเดิน / คลิกเป้า / ซูมกล้อง 3D) ───────────── */
+let camDrag = false, camDragX = 0, camDragMoved = 0;
 cv.addEventListener('mousedown', (e) => {
   if (state.screen !== 'play' || state.paused) return;
-  if (e.button === 2) {
-    state.targetMonster = null;
-    state.player.path = null; state.player.pathIdx = 0;
-    UI.setTarget(null);
+  if (e.button === 2 || e.button === 1) {
+    camDrag = true;
+    camDragX = e.clientX;
+    camDragMoved = 0;
     e.preventDefault();
     return;
   }
@@ -1405,6 +1433,13 @@ cv.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 window.addEventListener('mousemove', (e) => {
+  if (camDrag && state.screen === 'play' && !state.paused) {
+    const dx = e.clientX - camDragX;
+    camDragX = e.clientX;
+    camDragMoved += Math.abs(dx);
+    if (GFX3D.ok && Math.abs(dx) > 0) GFX3D.rotateYaw(-dx * 0.0075);
+    return;
+  }
   if (!mouseHeld || state.screen !== 'play' || state.paused) return;
   holdT += 1;
   const now = performance.now();
@@ -1413,7 +1448,17 @@ window.addEventListener('mousemove', (e) => {
   orderMove(e.clientX, e.clientY);
 });
 
-window.addEventListener('mouseup', () => { mouseHeld = false; });
+window.addEventListener('mouseup', (e) => {
+  if (camDrag) {
+    camDrag = false;
+    if (camDragMoved < 6 && e.button === 2 && state.player) {
+      state.targetMonster = null;
+      state.player.path = null; state.player.pathIdx = 0;
+      UI.setTarget(null);
+    }
+  }
+  mouseHeld = false;
+});
 cv.addEventListener('mouseleave', () => { mouseHeld = false; });
 cv.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -1486,6 +1531,9 @@ window.addEventListener('keydown', (e) => {
   if (k === 'f5') { e.preventDefault(); handlers.onSave(0); return; }
   if (k === 'f3') { e.preventDefault(); Settings.set('perf', !Settings.get('perf')); return; }
   if (state.screen !== 'play') return;
+  if (k === '[' || k === ',') { GFX3D.rotateYaw(-0.35); if (state.player) state.player.dir = -1; return; }
+  if (k === ']' || k === '.') { GFX3D.rotateYaw(0.35); if (state.player) state.player.dir = 1; return; }
+  if (k === '\\') { GFX3D.resetCamera(); return; }
 
   if (k >= '1' && k <= '9') {
     const i = Number(k) - 1;
@@ -1679,6 +1727,23 @@ window.addEventListener('pointerdown', unlock);
 window.addEventListener('keydown', unlock);
 
 // คลิกที่มินิแมปเพื่อเดินไปยังจุดนั้นอัตโนมัติ (A*)
+// ปุ่มควบคุมมุมกล้องซ้าย-ขวา & หันตัวละครบน HUD (v2.1.0)
+document.getElementById('btn-cam-left')?.addEventListener('click', () => {
+  GFX3D.rotateYaw(-0.45);
+  if (state.player) state.player.dir = -1;
+});
+document.getElementById('btn-cam-right')?.addEventListener('click', () => {
+  GFX3D.rotateYaw(0.45);
+  if (state.player) state.player.dir = 1;
+});
+document.getElementById('btn-cam-reset')?.addEventListener('click', () => {
+  GFX3D.resetCamera();
+  UI.toast('🧭 รีเซ็ตมุมกล้องกลับทิศเหนือแล้ว', 'good');
+});
+document.getElementById('btn-face-flip')?.addEventListener('click', () => {
+  if (state.player) state.player.dir = (state.player.dir < 0) ? 1 : -1;
+});
+
 const mmEl = document.getElementById('minimap');
 mmEl?.addEventListener('click', (e) => {
   if (state.screen !== 'play' || !state.player || !state.world || !finder) return;
@@ -1705,7 +1770,7 @@ window.__GRIAN__ = {
   VFX, Auto, AutoQ, GFX3D, Net, hasFullSet,
   hasSave, listSlots, wipeSave,
   get finder() { return finder; },
-  orderMove, openChest, beginCapture, travelTo, advanceClass,
-  craftProtectCharm, togglePartyBot, applyGuildBuff, startTowerFloor, playerAura, recalcPlayer,
+  orderMove, openChest, beginCapture, travelTo, advanceClass, playerAttack,
+  craftProtectCharm, togglePartyBot, applyGuildBuff, startTowerFloor, playerAura, recalcPlayer, weaponSpriteFor,
   T, HURT_TILES,
 };

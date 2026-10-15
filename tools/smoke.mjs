@@ -289,15 +289,18 @@ const clickTarget = await page.evaluate(async (isolateSrc) => {
   S.targetMonster = null; p.path = null;
   m.dead = false; m.hp = m.maxHp; m.stun = 0;
   m.wanderT = 99; m.wanderDir = { x: 0, y: 0 };
-  // วางมอนให้ *เดินไปถึงได้จริง* — เทสต์ก่อนหน้า (6b/6c) ย้ายผู้เล่นไปที่ต่าง ๆ
-  // ถ้าวาง p.x+110 ตรง ๆ อาจตกในกำแพง/น้ำ → ผู้เล่นเข้าไม่ถึง (เทสต์แฟลกทั้งที่เกมถูก)
-  const cands = [[110, 0], [-110, 0], [0, 110], [0, -110], [78, 78], [-78, 78], [78, -78], [-78, -78]];
-  let placedAt = null;
-  for (const [dx, dy] of cands) {
-    const tx = p.x + dx, ty = p.y + dy;
-    if (!S.world.solidAtPx(tx, ty) && !S.world.solidAtPx(tx, ty - 10)) { m.x = tx; m.y = ty; placedAt = [dx, dy]; break; }
+  // รีเซ็ตผู้เล่นกลับจุดเกิดหมู่บ้านหรือเลือกทิศที่เดินได้จริงทั้งต้นทาง-ปลายทาง (กันสถานะค้างจาก 6b/6c)
+  let placed = false;
+  for (let a = 0; a < 8; a++) {
+    const ang = (a / 8) * Math.PI * 2;
+    const tx = p.x + Math.cos(ang) * 96;
+    const ty = p.y + Math.sin(ang) * 96;
+    if (!S.world.solidAtPx(tx, ty) && G.finder.find(p.x, p.y, tx, ty)) {
+      m.x = tx; m.y = ty; placed = true; break;
+    }
   }
-  if (!placedAt) { m.x = p.x + 110; m.y = p.y; placedAt = [110, 0]; }
+  if (!placed) { p.x = S.world.spawn.x; p.y = S.world.spawn.y; m.x = p.x + 96; m.y = p.y; }
+  G.Camera.snap(p.x - 240, p.y - 135);
 
   const cv = document.getElementById('world');
   const r = cv.getBoundingClientRect();
@@ -310,20 +313,11 @@ const clickTarget = await page.evaluate(async (isolateSrc) => {
   const targeted = S.targetMonster === m;
   const boxShown = !document.getElementById('target-box').classList.contains('hidden');
   const hp0 = m.hp;
-  // diagnostics — เก็บไว้ดูตอนเทสต์ล้ม (เผื่อกรณีพึ่งพาสถานะจากเทสต์ก่อนหน้า)
-  const diag = { auto: !!G.Auto.on, screen: S.screen, mapId: S.mapId, atk: Math.round(p.atk),
-    solidAtPlace: S.world.solidAtPx(m.x, m.y), minDist: 999, maxDist: 0, lastPath: 0 };
   for (let i = 0; i < 120; i++) {
     await new Promise((res) => setTimeout(res, 100));
-    const d = Math.hypot(m.x - p.x, m.y - p.y);
-    diag.minDist = Math.min(diag.minDist, d);
-    diag.maxDist = Math.max(diag.maxDist, d);
-    diag.lastPath = p.path ? p.path.length : 0;
     if (m.dead || m.hp < hp0) break;
   }
-  diag.minDist = Math.round(diag.minDist); diag.maxDist = Math.round(diag.maxDist);
-  diag.playerDead = p.dead; diag.playerHp = Math.round(p.hp);
-  return { targeted, boxShown, hp0, hp1: m.hp, dead: m.dead, name: m.name, placedAt, diag };
+  return { targeted, boxShown, hp0, hp1: m.hp, dead: m.dead, name: m.name };
 }, ISOLATE_FN);
 if (clickTarget.err) bad('คลิกเป้า', clickTarget.err);
 else if (clickTarget.targeted && clickTarget.boxShown && (clickTarget.hp1 < clickTarget.hp0 || clickTarget.dead)) {
@@ -1475,6 +1469,54 @@ const safeZoneTest = await page.evaluate(() => {
 if (safeZoneTest.leakedSpot === 0 && safeZoneTest.inVil === 0 && safeZoneTest.totalMonsters > 0) {
   ok(`Safe Zone หมู่บ้านปลอดภัย 100%: randomSpot ไม่รั่ว (0/210) · หลังรัน 12 วิ มอนป่าในหมู่บ้าน = 0 ตัว`);
 } else bad("มอนป่าหลุดเข้า Safe Zone หมู่บ้าน", JSON.stringify(safeZoneTest));
+
+/* ── 24e. ทดสอบ v2.1.0: ดาบขยับเวลาฟัน (2D/3D) + หมุนมุมกล้องซ้าย-ขวา/หันตัว + UI ใหม่ ── */
+const v21Test = await page.evaluate(async () => {
+  const G = window.__GRIAN__;
+  const S = G.state, p = S.player;
+
+  // 1) ตรวจปุ่ม UI หมุนมุมกล้อง & หันตัวละคร
+  const btnL = document.getElementById("btn-cam-left");
+  const btnR = document.getElementById("btn-cam-right");
+  const btnReset = document.getElementById("btn-cam-reset");
+  const btnFlip = document.getElementById("btn-face-flip");
+  const hasCamUi = !!(btnL && btnR && btnReset && btnFlip);
+
+  btnL.click();
+  const yawAfterLeft = G.GFX3D.yaw;
+  const dirAfterLeft = p.dir;
+  btnR.click();
+  btnR.click();
+  const yawAfterRight = G.GFX3D.yaw;
+  const dirAfterRight = p.dir;
+  btnFlip.click();
+  const dirAfterFlip = p.dir;
+  btnReset.click();
+  const yawAfterReset = G.GFX3D.yaw;
+
+  // 2) ตรวจแอนิเมชันดาบขยับเวลาฟัน (ทั้งสถานะ swingT, เฟรมที่ 3, และ 3D Weapon Pool)
+  G.GFX3D._softwareGL = () => false;
+  G.GFX3D._bench = () => true;
+  G.Settings.set("render3d", "on");
+  G.playerAttack(S, 1);
+  const swingStarted = p.swingT > 0 && p.swingDur > 0;
+  await new Promise((r) => setTimeout(r, 60));
+  const wpnPoolActive = (G.GFX3D.weaponPool || []).filter((w) => w.visible).length;
+  const wpnSprite = G.weaponSpriteFor(p);
+  G.Settings.set("render3d", "off");
+
+  return {
+    hasCamUi,
+    yawWorked: yawAfterLeft < -0.1 && yawAfterRight > 0.1 && yawAfterReset === 0,
+    dirWorked: dirAfterLeft === -1 && dirAfterRight === 1 && dirAfterFlip === -1,
+    swingStarted,
+    wpnPoolActive,
+    wpnSprite,
+  };
+});
+if (v21Test.hasCamUi && v21Test.yawWorked && v21Test.dirWorked && v21Test.swingStarted && v21Test.wpnPoolActive >= 1) {
+  ok(`ระบบ v2.1.0 ทำงานครบ: ดาบขยับเวลาฟัน (3D weaponPool=${v21Test.wpnPoolActive} · ${v21Test.wpnSprite}) · หมุนมุมกล้องซ้าย-ขวา/หันตัว · UI ใหม่ครบ`);
+} else bad("ระบบ v2.1.0 ไม่ครบ", JSON.stringify(v21Test));
 
 /* ── 25. ปล่อยรันต่อเพื่อจับ error ที่หลุด ── */
 await page.keyboard.down('a');

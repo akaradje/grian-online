@@ -76,13 +76,20 @@ await page.evaluate(() => {
   const G = window.__GRIAN__;
   const v = G.state.world.village;
   const p = G.state.player;
-  p.x = (v.x + 13) * 16; p.y = (v.y + 6) * 16;
+  p.x = (v.x + 13) * 16; p.y = (v.y + 10) * 16;
   p.prevX = p.x; p.prevY = p.y;
   G.Camera.snap(p.x - 240, p.y - 135);
   G.DayNight.t = 0.45;
+  G.GFX3D.rotateYaw(0.28);
 });
-await page.waitForTimeout(1200);
+await page.waitForTimeout(1000);
+await page.evaluate(() => {
+  const p = window.__GRIAN__.state.player;
+  p.swingT = 0.18; p.swingDur = 0.28;
+});
+await page.waitForTimeout(50);
 await page.screenshot({ path: path.join(OUT, 'shot-r3d-day.png') });
+await page.evaluate(() => window.__GRIAN__.GFX3D.resetCamera());
 
 // กลางคืน หมู่บ้าน — เงา+แสง
 await page.evaluate(() => { window.__GRIAN__.DayNight.t = 0.0; });

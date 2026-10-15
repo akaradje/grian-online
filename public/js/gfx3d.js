@@ -198,10 +198,25 @@ export const GFX3D = {
   reason: null,
   zoom: 0.92,      // ซูมเริ่มต้นใกล้ขึ้นเล็กน้อยให้เห็นรายละเอียดตัวละครและโมเดล 3D ชัดเจน
   elev: 0.58,      // มุมกล้องก้มกำลังดี เห็นมิติอาคารและต้นไม้ 3D
+  yaw: 0,          // มุมหมุนกล้องซ้าย-ขวา (เรเดียน, 0 = มองจากทิศใต้ขึ้นเหนือ)
+  targetYaw: 0,
 
   setZoom(delta) {
     this.zoom = Math.max(0.60, Math.min(1.45, (this.zoom || 1) + delta));
     return this.zoom;
+  },
+
+  rotateYaw(delta) {
+    this.targetYaw = (this.targetYaw || 0) + delta;
+    this.yaw = this.targetYaw;
+    return this.yaw;
+  },
+
+  resetCamera() {
+    this.targetYaw = 0;
+    this.yaw = 0;
+    this.zoom = 0.92;
+    return 0;
   },
 
   /* ═══════════ init ═══════════ */
@@ -266,12 +281,43 @@ export const GFX3D = {
 
     this._initFx3DPool();
     this._initAuraPool();
+    this._initWeaponPool();
     VFX.on3DSpawn = (kind, e) => this.spawn3DFx(kind, e);
 
     this.build(world);
     this._benchPending = Settings.get('render3d') === 'auto';
     this.ok = true;
     return true;
+  },
+
+  /** สร้าง Pool ของดาบ/อาวุธ 3D ที่หมุนฟันตามจังหวะโจมตีจริง (v2.1.0) */
+  _initWeaponPool() {
+    this.weaponPool = [];
+    const bladeGeo = new THREE.PlaneGeometry(22, 22);
+    bladeGeo.translate(0, 8.5, 0); // จุดหมุนอยู่ที่ด้ามดาบ
+    const trailGeo = new THREE.RingGeometry(8.0, 17.5, 16, 1, -0.4, 2.1);
+    for (let i = 0; i < 20; i++) {
+      const grp = new THREE.Group();
+      const tex0 = this._frameTex('wpn_sword', 0, false);
+      const bMat = new THREE.MeshBasicMaterial({
+        map: tex0, transparent: true, alphaTest: 0.35, depthTest: false, side: THREE.DoubleSide,
+      });
+      const blade = new THREE.Mesh(bladeGeo, bMat);
+      blade.renderOrder = 8;
+      const tMat = new THREE.MeshBasicMaterial({
+        color: 0xffdf7a, transparent: true, opacity: 0.82,
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+      });
+      const trail = new THREE.Mesh(trailGeo, tMat);
+      trail.renderOrder = 7;
+      trail.position.z = -0.2;
+      grp.add(blade);
+      grp.add(trail);
+      grp.visible = false;
+      grp.userData = { blade, bMat, trail, tMat, wpnId: 'wpn_sword' };
+      this.scene.add(grp);
+      this.weaponPool.push(grp);
+    }
   },
 
   /** สร้าง Pool ของวงแหวนออร่า 3D ใต้เท้าตัวละครที่ตีบวกและ Elite/Boss */
@@ -963,6 +1009,7 @@ export const GFX3D = {
     if (!sp) return null;
     const fIdx = Math.min(frame || 0, sp.frames.length - 1);
     const key = `${sprId}:${fIdx}:${flip ? 'L' : 'R'}`;
+    if (!this.frameCache) this.frameCache = {};
     if (!this.frameCache[key]) {
       const baseCanvas = sp.frames[fIdx] || sp.frames[0];
       const src = flip ? makeFlippedCanvas(baseCanvas) : baseCanvas;
@@ -980,16 +1027,26 @@ export const GFX3D = {
     }
     let shN = 0;
     let auraIdx = 0;
+    let wpnIdx = 0;
+    const yaw = this.yaw || 0;
+    const fwdX = Math.sin(yaw) * 4.2, fwdZ = Math.cos(yaw) * 4.2;
+    const rightX = Math.cos(yaw), rightZ = -Math.sin(yaw);
+
     for (const ent of list) {
       const mesh = this._getEntity(ent.sprId);
       if (!mesh) continue;
       const sp = SPR[ent.sprId] || SPR['dummy'];
+      const swing = ent.swing || 0;
+      const dir = ent.flip ? -1 : 1;
+      const lunge = swing > 0 ? Math.sin(swing * Math.PI) * 3.2 * dir : 0;
+      const ex = ent.x + fwdX + rightX * lunge;
+      const ez = ent.y + fwdZ + rightZ * lunge;
       const h = this.heightAt(ent.x, ent.y);
-      mesh.position.set(ent.x, h + (ent.headUp || 0) + sp.h * 0.6 - 0.8, ent.y + 4.2);
+      mesh.position.set(ex, h + (ent.headUp || 0) + sp.h * 0.6 - 0.8, ez);
       mesh.quaternion.copy(camQ);
       mesh.scale.x = 1; // ใช้ pre-flipped texture แทน scale.x = -1 เพื่อรักษา FrontSide
 
-      const fIdx = Math.min(ent.frame || 0, sp.frames.length - 1);
+      const fIdx = (swing > 0 && sp.frames.length >= 3) ? 2 : Math.min(ent.frame || 0, sp.frames.length - 1);
       const texKey = `${ent.sprId}:${fIdx}:${ent.flip ? 'L' : 'R'}`;
       if (mesh.userData.texKey !== texKey) {
         const tex = this._frameTex(ent.sprId, fIdx, !!ent.flip);
@@ -999,20 +1056,49 @@ export const GFX3D = {
       }
       mesh.visible = true;
 
+      // แอนิเมชันดาบ 3D เหวี่ยงฟันโค้ง 155 องศา พร้อมคลื่นแสงหน้าดาบ
+      if (swing > 0 && this.weaponPool && wpnIdx < this.weaponPool.length) {
+        const wGrp = this.weaponPool[wpnIdx++];
+        const u = wGrp.userData;
+        const wpnId = ent.wpnId || 'wpn_sword';
+        if (u.wpnId !== wpnId) {
+          u.wpnId = wpnId;
+          u.bMat.map = this._frameTex(wpnId, 0, false);
+          u.bMat.needsUpdate = true;
+          u.tMat.color.setHex(wpnId === 'wpn_cyber' ? 0x4ae8ff : (wpnId === 'wpn_hell' ? 0xff4d6b : (wpnId === 'wpn_gold' ? 0xffe066 : 0xffffff)));
+        }
+        wGrp.visible = true;
+        wGrp.position.set(
+          ex + rightX * dir * 4.5 + Math.sin(yaw) * 1.4,
+          h + (ent.headUp || 0) + 8.5,
+          ez + rightZ * dir * 4.5 + Math.cos(yaw) * 1.4
+        );
+        wGrp.quaternion.copy(camQ);
+        const ease = 1 - (1 - swing) * (1 - swing);
+        const rotZ = -dir * (-0.55 + ease * 2.75);
+        u.blade.rotation.z = rotZ;
+        u.trail.visible = swing > 0.08 && swing < 0.92;
+        u.trail.material.opacity = Math.sin(swing * Math.PI) * 0.72;
+        u.trail.rotation.z = rotZ - dir * 0.55;
+      }
+
       if (this.shadowMesh && shN < MAX_SHADOWS) {
         const d = (ent.shadowR || Math.max(10, sp.w * 0.72));
-        this._m4.compose(this._v.set(ent.x, h + 0.6, ent.y + 4.2), this._qi, this._v2.set(d, d, 1));
+        this._m4.compose(this._v.set(ex, h + 0.6, ez), this._qi, this._v2.set(d, d, 1));
         this.shadowMesh.setMatrixAt(shN++, this._m4);
       }
 
       if (ent.auraColor && this.auraPool && auraIdx < MAX_AURAS) {
         const ring = this.auraPool[auraIdx++];
         ring.visible = true;
-        ring.position.set(ent.x, h + 0.9, ent.y + 4.2);
+        ring.position.set(ex, h + 0.9, ez);
         const pulse = 0.92 + 0.14 * Math.sin(this._t * 6 + auraIdx);
         ring.scale.set(pulse, 1, pulse);
         ring.material.color.set(ent.auraColor);
       }
+    }
+    if (this.weaponPool) {
+      for (let i = wpnIdx; i < this.weaponPool.length; i++) this.weaponPool[i].visible = false;
     }
     if (this.auraPool) {
       for (let i = auraIdx; i < MAX_AURAS; i++) this.auraPool[i].visible = false;
@@ -1172,9 +1258,15 @@ export const GFX3D = {
     const p = state.player;
     this._t += dt;
 
-    const fx = p.x + p.dir * 22, fz = p.y + 10;
+    this.yaw += ((this.targetYaw || 0) - (this.yaw || 0)) * Math.min(1, dt * 10);
+    const yaw = this.yaw || 0;
+    const fx = p.x + Math.cos(yaw) * p.dir * 18, fz = p.y - Math.sin(yaw) * p.dir * 18 + 8;
     const D = 300 * (this.zoom || 0.92), ELEV = this.elev || 0.58;
-    this.camera.position.lerp(this._v.set(fx, D * Math.sin(ELEV), fz + D * Math.cos(ELEV)), Math.min(1, dt * 7));
+    const H = D * Math.cos(ELEV);
+    this.camera.position.lerp(
+      this._v.set(fx + Math.sin(yaw) * H, D * Math.sin(ELEV), fz + Math.cos(yaw) * H),
+      Math.min(1, dt * 8)
+    );
     this.camTarget.lerp(this._v.set(fx, 0, fz), Math.min(1, dt * 7));
     this.camera.lookAt(this.camTarget);
     this._pickY = this.heightAt(p.x, p.y);

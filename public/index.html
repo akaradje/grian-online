@@ -50,7 +50,7 @@
     </div>
   </div>
   <div class="title-foot">
-    <span>v2.0.0 · ยังไม่เปิดให้เติมเงิน (แต่มีสุลต่านในเซิร์ฟ)</span>
+    <span>v2.1.0 · ยังไม่เปิดให้เติมเงิน (แต่มีสุลต่านในเซิร์ฟ)</span>
     <span id="title-online">ออนไลน์ 0 คน</span>
   </div>
 </section>
@@ -159,6 +159,12 @@
       <span class="muted">เวลาในเกม</span>
     </div>
     <canvas id="minimap" width="150" height="110"></canvas>
+    <div class="cam-bar" title="หมุนมุมกล้องซ้าย-ขวา (คลิกขวาค้างลาก หรือปุ่ม [ ])">
+      <button type="button" class="cam-btn" id="btn-cam-left" title="หมุนกล้องซ้าย ([)">⟲ ซ้าย</button>
+      <button type="button" class="cam-btn" id="btn-cam-reset" title="รีเซ็ตมุมกล้อง (\)">🧭</button>
+      <button type="button" class="cam-btn" id="btn-cam-right" title="หมุนกล้องขวา (])">ขวา ⟳</button>
+      <button type="button" class="cam-btn" id="btn-face-flip" title="สลับหันซ้าย/ขวา">↔</button>
+    </div>
     <div class="boss-line">
       <span>บอสโลก</span>
       <b id="boss-timer">--:--</b>
@@ -293,6 +299,7 @@
           <tr><td>คลิกซ้ายที่พื้น</td><td>เดินไปจุดนั้น (หาทางอัตโนมัติ)</td></tr>
           <tr><td>คลิกซ้ายที่มอน / บอท(PK)</td><td>เดินเข้าไปแล้วตีอัตโนมัติ</td></tr>
           <tr><td>ลูกกลิ้งเมาส์ (Wheel)</td><td>ซูมกล้องเข้า-ออกในโหมด 3D</td></tr>
+          <tr><td>คลิกขวาค้างลาก / <kbd>[</kbd> <kbd>]</kbd></td><td>หมุนมุมกล้องซ้าย-ขวา · ปุ่ม <kbd>\</kbd> หรือ 🧭 รีเซ็ตมุม</td></tr>
           <tr><td>คลิกขวา</td><td>ยกเลิกเป้าหมาย/เส้นทาง</td></tr>
           <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / ลูกศร</td><td>เดินเอง (ใช้คู่กับเมาส์ได้)</td></tr>
           <tr><td><kbd>Space</kbd></td><td>โจมตีมอนหรือคู่ประลองใกล้สุด</td></tr>

@@ -158,7 +158,12 @@ function drawHuman(g, p, frame, o = {}) {
     px(g, 7, 5 + yOff, '#111');
   }
   if (o.badge) { rc(g, 6, 9 + yOff, 2, 2, '#ffc94d'); }
-  // อาวุธประจำตัวในมือขวา
+  // เฟรม 2 = ท่าเหวี่ยงดาบฟัน (ยื่นแขนขวาไปข้างหน้า ส่วนตัวดาบจะหมุนแยกเป็นแอนิเมชันจริง)
+  if (frame === 2) {
+    rc(g, 12, 8, 3, 2, p.skin);
+    return;
+  }
+  // อาวุธประจำตัวในมือขวา (เฟรมยืน/เดินปกติ 0 และ 1)
   if (o.weapon === 'sword') {
     rc(g, 13, 3 + yOff, 2, 7, '#dce6f2');
     px(g, 13, 3 + yOff, '#ffffff');
@@ -273,13 +278,39 @@ export function buildSprites() {
     admin:    { hat: 'cap', badge: true, weapon: 'hammer', cape: '#2b3a55' },
   };
   for (const [cls, pal] of Object.entries(CLASS_PAL)) {
-    const frames = [0, 1].map((f) => {
+    const frames = [0, 1, 2].map((f) => {
       const c = makeCanvas(P, P);
       drawHuman(c.getContext('2d'), pal, f, heroOpts[cls] || {});
       return addOutline(c, OUT);
     });
     reg('hero_' + cls, frames);
   }
+
+  /* ── สไปรต์อาวุธแยกสำหรับแอนิเมชันเหวี่ยงดาบฟัน (v2.1.0) ── */
+  const makeWeaponSpr = (bladeCol, edgeCol, guardCol, hiltCol, isStaff = false) => {
+    const c = makeCanvas(16, 16), g = c.getContext('2d');
+    if (isStaff) {
+      rc(g, 7, 4, 2, 10, hiltCol);
+      rc(g, 5, 1, 6, 4, bladeCol);
+      rc(g, 6, 2, 4, 2, edgeCol);
+      px(g, 7, 1, '#ffffff');
+    } else {
+      // ใบดาบแนวตั้ง (จุดหมุนอยู่ที่ด้าม y=13)
+      rc(g, 7, 1, 3, 10, bladeCol);
+      rc(g, 7, 1, 1, 9, edgeCol);
+      px(g, 8, 0, '#ffffff');
+      // โกร่งดาบ + ด้ามจับ
+      rc(g, 4, 11, 9, 2, guardCol);
+      rc(g, 7, 13, 3, 2, hiltCol);
+      px(g, 8, 15, guardCol);
+    }
+    return addOutline(c, OUT);
+  };
+  reg('wpn_sword', [makeWeaponSpr('#dce6f2', '#ffffff', '#ffc94d', '#8a5c2e')]);
+  reg('wpn_gold',  [makeWeaponSpr('#ffe066', '#ffffff', '#ff9d3b', '#9c274c')]);
+  reg('wpn_hell',  [makeWeaponSpr('#ff4d6b', '#ffb8d0', '#b98bff', '#3a1d4a')]);
+  reg('wpn_cyber', [makeWeaponSpr('#4ae8ff', '#ffffff', '#ff4d8a', '#1b2845')]);
+  reg('wpn_staff', [makeWeaponSpr('#ff5f3c', '#fff2c0', '#ffc94d', '#8a5c2e', true)]);
 
   /* ── NPC ── */
   const npcCfg = {
