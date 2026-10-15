@@ -288,7 +288,16 @@ const clickTarget = await page.evaluate(async (isolateSrc) => {
   p.hp = p.maxHp; p.dead = false;
   S.targetMonster = null; p.path = null;
   m.dead = false; m.hp = m.maxHp; m.stun = 0;
-  m.x = p.x + 110; m.y = p.y;
+  m.wanderT = 99; m.wanderDir = { x: 0, y: 0 };
+  // วางมอนให้ *เดินไปถึงได้จริง* — เทสต์ก่อนหน้า (6b/6c) ย้ายผู้เล่นไปที่ต่าง ๆ
+  // ถ้าวาง p.x+110 ตรง ๆ อาจตกในกำแพง/น้ำ → ผู้เล่นเข้าไม่ถึง (เทสต์แฟลกทั้งที่เกมถูก)
+  const cands = [[110, 0], [-110, 0], [0, 110], [0, -110], [78, 78], [-78, 78], [78, -78], [-78, -78]];
+  let placedAt = null;
+  for (const [dx, dy] of cands) {
+    const tx = p.x + dx, ty = p.y + dy;
+    if (!S.world.solidAtPx(tx, ty) && !S.world.solidAtPx(tx, ty - 10)) { m.x = tx; m.y = ty; placedAt = [dx, dy]; break; }
+  }
+  if (!placedAt) { m.x = p.x + 110; m.y = p.y; placedAt = [110, 0]; }
 
   const cv = document.getElementById('world');
   const r = cv.getBoundingClientRect();
@@ -301,11 +310,20 @@ const clickTarget = await page.evaluate(async (isolateSrc) => {
   const targeted = S.targetMonster === m;
   const boxShown = !document.getElementById('target-box').classList.contains('hidden');
   const hp0 = m.hp;
-  for (let i = 0; i < 120; i++) {          // 12 วิ — เผื่อมอนเดินหนีระหว่างที่ผู้เล่นเดินเข้าไปตี
+  // diagnostics — เก็บไว้ดูตอนเทสต์ล้ม (เผื่อกรณีพึ่งพาสถานะจากเทสต์ก่อนหน้า)
+  const diag = { auto: !!G.Auto.on, screen: S.screen, mapId: S.mapId, atk: Math.round(p.atk),
+    solidAtPlace: S.world.solidAtPx(m.x, m.y), minDist: 999, maxDist: 0, lastPath: 0 };
+  for (let i = 0; i < 120; i++) {
     await new Promise((res) => setTimeout(res, 100));
+    const d = Math.hypot(m.x - p.x, m.y - p.y);
+    diag.minDist = Math.min(diag.minDist, d);
+    diag.maxDist = Math.max(diag.maxDist, d);
+    diag.lastPath = p.path ? p.path.length : 0;
     if (m.dead || m.hp < hp0) break;
   }
-  return { targeted, boxShown, hp0, hp1: m.hp, dead: m.dead, name: m.name };
+  diag.minDist = Math.round(diag.minDist); diag.maxDist = Math.round(diag.maxDist);
+  diag.playerDead = p.dead; diag.playerHp = Math.round(p.hp);
+  return { targeted, boxShown, hp0, hp1: m.hp, dead: m.dead, name: m.name, placedAt, diag };
 }, ISOLATE_FN);
 if (clickTarget.err) bad('คลิกเป้า', clickTarget.err);
 else if (clickTarget.targeted && clickTarget.boxShown && (clickTarget.hp1 < clickTarget.hp0 || clickTarget.dead)) {
@@ -525,13 +543,11 @@ const vfxTest = await page.evaluate(async () => {
   const results = [];
   for (const id of p.cls.skills) {
     p.cooldowns[id] = 0; p.mp = p.maxMp; p.hp = p.maxHp;
-    // นับเอฟเฟกต์ใหม่ด้วย identity ของออบเจกต์ — เอฟเฟกต์เก่าที่หมดอายุระหว่างรอ
-    // ไม่ทำให้ผลต่างเป็น 0 (เดิมนับ VFX.count() delta แล้วแฟลกได้)
-    const beforeSet = new Set(G.VFX.list);
+    const before = new Set([...G.VFX.list, ...G.VFX.flashes]);
     G.handlers.onSkill(id);
     await new Promise((r) => setTimeout(r, 90));
-    const spawned = G.VFX.list.filter((e) => !beforeSet.has(e)).length;
-    results.push({ id, spawned });
+    const after = [...G.VFX.list, ...G.VFX.flashes];
+    results.push({ id, spawned: after.filter((x) => !before.has(x)).length });
     await new Promise((r) => setTimeout(r, 350));
   }
   return {
@@ -1434,6 +1450,31 @@ if (v2Test.fullSet && v2Test.setBoosted && v2Test.netConnected && v2Test.wsModeO
     bad("ไฟล์ Deploy ไม่ถูกต้อง", JSON.stringify({ ryOk, dfOk, pkgOk, hasNet }));
   }
 }
+
+/* ── 24d. ตรวจ Safe Zone หมู่บ้าน (มอนสเตอร์ป่าห้ามเกิดหรือเดินเข้าหมู่บ้าน) ── */
+const safeZoneTest = await page.evaluate(() => {
+  const G = window.__GRIAN__;
+  const S = G.state;
+  const W = S.world;
+  // ตรวจ randomSpot ทุก region พร้อม outsideVillage: true จำนวน 200 ครั้ง
+  let leakedSpot = 0;
+  for (const reg of ["village", "graveyard", "cave", "tallgrass", "shore", "field"]) {
+    for (let i = 0; i < 35; i++) {
+      const sp = W.randomSpot(Math.random, { region: reg, outsideVillage: true, tries: 80 });
+      if (W.inVillage(sp.x, sp.y)) leakedSpot++;
+    }
+  }
+  // ล้างมอนที่เทสต์ก่อนหน้าย้ายเข้ามาใกล้ผู้เล่น แล้วเสกใหม่ตามระบบจริง + รัน 12 วินาที
+  S.monsters = [];
+  const p = S.player;
+  p.x = W.spawn.x; p.y = W.spawn.y;
+  for (let i = 0; i < 180; i++) G.step(1 / 15);
+  const inVil = S.monsters.filter((m) => !m.dead && !m.towerWave && !m.engaged && W.inVillage(m.x, m.y)).length;
+  return { leakedSpot, inVil, totalMonsters: S.monsters.length };
+});
+if (safeZoneTest.leakedSpot === 0 && safeZoneTest.inVil === 0 && safeZoneTest.totalMonsters > 0) {
+  ok(`Safe Zone หมู่บ้านปลอดภัย 100%: randomSpot ไม่รั่ว (0/210) · หลังรัน 12 วิ มอนป่าในหมู่บ้าน = 0 ตัว`);
+} else bad("มอนป่าหลุดเข้า Safe Zone หมู่บ้าน", JSON.stringify(safeZoneTest));
 
 /* ── 25. ปล่อยรันต่อเพื่อจับ error ที่หลุด ── */
 await page.keyboard.down('a');

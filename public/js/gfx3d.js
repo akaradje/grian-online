@@ -1001,14 +1001,14 @@ export const GFX3D = {
 
       if (this.shadowMesh && shN < MAX_SHADOWS) {
         const d = (ent.shadowR || Math.max(10, sp.w * 0.72));
-        this._m4.compose(this._v.set(ent.x, h + 0.6, ent.y), this._qi, this._v2.set(d, d, 1));
+        this._m4.compose(this._v.set(ent.x, h + 0.6, ent.y + 4.2), this._qi, this._v2.set(d, d, 1));
         this.shadowMesh.setMatrixAt(shN++, this._m4);
       }
 
       if (ent.auraColor && this.auraPool && auraIdx < MAX_AURAS) {
         const ring = this.auraPool[auraIdx++];
         ring.visible = true;
-        ring.position.set(ent.x, h + 0.9, ent.y);
+        ring.position.set(ent.x, h + 0.9, ent.y + 4.2);
         const pulse = 0.92 + 0.14 * Math.sin(this._t * 6 + auraIdx);
         ring.scale.set(pulse, 1, pulse);
         ring.material.color.set(ent.auraColor);

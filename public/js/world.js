@@ -770,16 +770,12 @@ export class World {
       if (awayFrom && Math.hypot(px - awayFrom.x, py - awayFrom.y) < minDist) continue;
       return { x: px, y: py };
     }
-    // fallback: สแกนตารางหาจุดที่ใช้ได้จริง (เดิมคืน this.spawn ซึ่งอยู่ในหมู่บ้าน —
-    // ทำให้มอนเกิดกลางหมู่บ้านเมื่อ region+outsideVillage หาไม่เจอใน tries ที่สุ่ม)
-    for (let y = 3; y < this.h - 3; y += 2) {
-      for (let x = 3; x < this.w - 3; x += 2) {
+    for (let y = 3; y < this.h - 3; y++) {
+      for (let x = 3; x < this.w - 3; x++) {
         if (this.isSolidTile(this.get(x, y))) continue;
         const px = x * CONFIG.TILE + CONFIG.TILE / 2;
         const py = y * CONFIG.TILE + CONFIG.TILE / 2;
         if (outsideVillage && this.inVillage(px, py)) continue;
-        if (region && this.regionAt(px, py) !== region) continue;
-        if (awayFrom && Math.hypot(px - awayFrom.x, py - awayFrom.y) < minDist) continue;
         return { x: px, y: py };
       }
     }
